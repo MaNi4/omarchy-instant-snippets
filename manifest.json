@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "mani4.instant-snippets",
+  "name": "Instant Snippets",
+  "version": "1.0.0",
+  "author": "MaNi4",
+  "license": "MIT",
+  "description": "Type a short trigger such as !em in any app and it is replaced with the text you saved for it, instantly. Hyprland passes key presses to a small script the plugin loads into Hyprland itself, so there is no daemon and no extra package",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml",
+    "service": "Service.qml"
+  },
+  "homepage": "https://github.com/MaNi4/omarchy-instant-snippets",
+  "barWidget": {
+    "displayName": "Instant Snippets",
+    "description": "Text expansion: type a trigger, get its replacement",
+    "category": "Productivity",
+    "aliases": [
+      "snippet",
+      "snippets",
+      "text expander",
+      "expand",
+      "abbreviation",
+      "autotext"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
