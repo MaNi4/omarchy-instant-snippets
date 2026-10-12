@@ -89,8 +89,35 @@ Panel {
   // The moment the settings were opened, for the examples of the formats.
   property date today: new Date()
 
+  // Where the snippets file is kept, as it was typed: "" for the usual place.
+  readonly property string dataLocation: service ? service.location : ""
+  onDataLocationChanged: if (!pathField.editing) pathField.text = dataLocation
+  // Why what was typed for it cannot be gone by, "" when it can.
+  property string pathProblem: ""
+
+  function rowOf(key) {
+    for (var i = 0; i < rows.length; i++) if (rows[i].indexOf(key) >= 0) return i
+    return 0
+  }
+
+  // What is in the field is not where the file is kept yet.
+  readonly property bool pathPending: pathField.text.trim() !== dataLocation
+
+  // Enter in the field, or the button beside it: the snippets file is kept
+  // there from now on.
+  function relocate() {
+    if (!service) return
+    pathProblem = service.setLocation(pathField.text)
+    if (pathProblem !== "") return
+    setCursor(rowOf("path"), 0)
+    // Nothing to move: the same place, spelled another way.
+    if (!service.relocation) pathField.text = dataLocation
+  }
+
   function configure() {
     today = new Date()
+    pathField.text = dataLocation
+    pathProblem = ""
     var names = app !== "" ? [app] : []
     var windows = ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
     for (var i = 0; i < windows.length; i++) {
@@ -117,6 +144,7 @@ Panel {
       + " that cannot be used (a trigger or replacement that is too short, too long or repeated). Fix the file to make changes here."
     : ""
   readonly property string trouble: !service ? "" : service.saveError !== "" ? service.saveError
+    : service.locationError !== "" ? service.locationError
     : service.engineError !== "" ? service.engineError : service.typingError
 
   // The snippets the filter leaves, as indexes into `snippets`.
@@ -294,7 +322,7 @@ Panel {
   readonly property var rows: composing
     ? [["trigger"], ["text"], editing >= 0 ? ["save", "cancel", "delete"] : ["save", "cancel"]]
     : configuring
-    ? [["back"], ["expanding"], ["shiftEnter"], ["undo"], ["wordStart"], ["dateFormat"], ["timeFormat"]]
+    ? [["back"], ["expanding"], ["shiftEnter"], ["undo"], ["wordStart"], ["dateFormat"], ["timeFormat"], ["path", "apply"]]
       .concat(skipped.map(function(name, index) { return ["skip:" + index] }))
       .concat(openApps.map(function(name, index) { return ["open:" + index] }))
     : [snippets.length > 0 ? ["filter", "new", "settings"] : ["new", "settings"]]
@@ -335,6 +363,8 @@ Panel {
     else if (key === "wordStart") { if (service && blocked === "") service.setWordStart(!wordStart) }
     else if (key === "dateFormat") { if (service && blocked === "") service.nextDateFormat() }
     else if (key === "timeFormat") { if (service && blocked === "") service.nextTimeFormat() }
+    else if (key === "path") pathField.focusInput()
+    else if (key === "apply") relocate()
     else if (key === "settings") configure()
     else if (key === "back") leaveSettings()
     else if (key.indexOf("skip:") === 0) { if (service && blocked === "") service.setSkipped(skipped[Number(key.substring(5))], false) }
@@ -765,7 +795,7 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       // While a field is being typed in, every key belongs to it.
-      blocked: filterField.editing || triggerField.editing || textEdit.activeFocus
+      blocked: filterField.editing || triggerField.editing || textEdit.activeFocus || pathField.editing
       onCloseRequested: root.composing ? root.leave() : root.configuring ? root.leaveSettings() : root.close()
       // Tab goes on to the next panel from the list; from the editor or the
       // settings, where that would throw away what is open, it goes back to
@@ -984,6 +1014,71 @@ Panel {
           key: "timeFormat"
           label: "Format of {time}"
           value: root.service ? Qt.formatTime(root.today, root.service.timeFormat) : ""
+        }
+
+        PanelSeparator {
+          visible: root.configuring
+          width: parent.width
+          foreground: root.barForeground
+        }
+
+        // ---------- Where the snippets file is ----------
+        // Typed, and taken with Enter: the keyboard cursor passes over the
+        // field, and Enter on it is what starts the typing.
+        PanelSectionHeader {
+          visible: root.configuring
+          text: "DATA LOCATION"
+          foreground: root.barForeground
+          fontFamily: root.ff
+        }
+
+        Row {
+          id: pathRow
+          visible: root.configuring
+          width: parent.width
+          spacing: Style.space(6)
+
+          LineField {
+            id: pathField
+            width: pathRow.width - applyButton.width - pathRow.spacing
+            placeholderText: "~/.config/omarchy/extensions"
+            maximumLength: Model.MAX_LOCATION
+            hasCursor: root.hasCursor("path")
+
+            onEditingChanged: if (editing) { root.cursorRow = root.rowOf("path"); root.cursorCol = 0 }
+            onEdited: root.pathProblem = ""
+            onEntered: root.relocate()
+            onEscaped: { text = root.dataLocation; root.pathProblem = ""; root.setCursor(root.rowOf("path"), 0) }
+            onTabbed: function(direction) { direction > 0 ? root.setCursor(root.rowOf("path"), 1) : root.setCursor(root.rowOf("path") - 1, 0) }
+            onSteppedDown: root.setCursor(root.rowOf("path") + 1, 0)
+          }
+
+          // What was typed counts for nothing until it is applied, so the
+          // button stands out while there is something to apply.
+          PanelButton {
+            id: applyButton
+            height: pathField.implicitHeight
+            opacity: root.pathPending ? 1 : 0.5
+            iconText: "\u{f012c}" // nf-md-check
+            text: "Apply"
+            foreground: root.pathPending ? root.accent : root.barForeground
+            hasCursor: root.hasCursor("apply")
+            onClicked: root.activate("apply")
+          }
+        }
+
+        Text {
+          visible: root.configuring
+          width: parent.width
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: root.pathProblem !== "" ? root.pathProblem
+            : root.pathPending ? "Not applied yet. Press Enter or Apply to keep the snippets file there."
+            : "A folder for the snippets file, one that is backed up or synced say. "
+              + "A snippets file already there is used; otherwise yours is moved there."
+          color: root.pathProblem !== "" || root.pathPending ? root.accent : root.dimForeground
+          font.family: root.ff
+          font.pixelSize: Style.font.caption
         }
 
         PanelSeparator {

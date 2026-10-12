@@ -706,6 +706,55 @@ function tightening(path) {
   return ["sh", "-c", '[ "$(stat -L -c %a -- "$1" 2>/dev/null)" = 600 ] || chmod 600 -- "$1"', "sh", path]
 }
 
+// ---------- Where the snippets file is ----------
+// The file can be kept somewhere else, a folder that is backed up or synced
+// say. What the user typed for that is kept as typed, in a file of its own
+// that stays where it is.
+var DATA_FILE = "instant-snippets.json"
+var MAX_LOCATION = 512
+
+// The snippets file out of what was typed for it: a folder, which the file
+// is then in under its usual name, or the file itself when it ends in .json.
+// A leading ~ is the home directory.
+//   { path: "/home/me/Sync/instant-snippets.json", error: "" }
+// `path` is "" for nothing typed, which is the usual place.
+function dataFile(typed, home) {
+  var text = String(typed || "").trim()
+  if (text === "") return { path: "", error: "" }
+  if (/[\u0000-\u001f\u007f]/.test(text)) return { path: "", error: "The location cannot contain line breaks or tabs." }
+  if (characters(text).length > MAX_LOCATION) return { path: "", error: "The location is too long." }
+  if (text === "~" || text.indexOf("~/") === 0) text = String(home || "") + text.substring(1)
+  if (text.charAt(0) !== "/") return { path: "", error: "Enter a full path, such as ~/Sync/snippets." }
+  var file = /\.json$/i.test(text)
+  text = text.replace(/\/+/g, "/").replace(/(.)\/$/, "$1")
+  return { path: file ? text : (text === "/" ? "" : text) + "/" + DATA_FILE, error: "" }
+}
+
+// The command that takes the snippets file from `from` to `to` and notes
+// `typed` in `pointer` as where it now is ("" removes the note: the usual
+// place). A file already at `to` is the one to use, another computer's say,
+// and is left as it is, as is the one at `from` then. Otherwise the file is
+// copied, closed to others, and removed from `from` only once the note is
+// written, so that whatever fails the snippets are still where the note says.
+function moving(from, to, pointer, typed) {
+  var script = 'umask 077; [ -d "$2" ] && exit 1\n'
+    + 'd=$(dirname -- "$2") && mkdir -p -- "$d" && [ -w "$d" ] || exit 1\n'
+    + 'moved=\n'
+    + 'if [ ! -e "$2" ] && [ -f "$1" ]; then\n'
+    + '  rm -f -- "$2.new" && (set -C; cat -- "$1" > "$2.new") && mv -f -- "$2.new" "$2" || exit 1\n'
+    + '  moved=1\n'
+    + 'fi\n'
+    + 'if [ -n "$4" ]; then\n'
+    + '  p=$(dirname -- "$3") && mkdir -p -- "$p" && rm -f -- "$3.new" && (set -C; printf "%s\\n" "$4" > "$3.new")'
+    + ' && mv -f -- "$3.new" "$3"\n'
+    + 'else\n'
+    + '  rm -f -- "$3"\n'
+    + 'fi || { [ -z "$moved" ] || rm -f -- "$2"; exit 1; }\n'
+    + '[ -z "$moved" ] || rm -f -- "$1"\n'
+    + 'exit 0'
+  return ["sh", "-c", script, "sh", from, to, pointer, typed]
+}
+
 // What `hyprctl eval` is given to start the engine: nothing but where the
 // plan is. The plan itself, which spells the triggers out as key numbers, is
 // in a file only its owner can read, not in a process's arguments.

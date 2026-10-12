@@ -22,7 +22,16 @@ Item {
     var s = String(Qt.resolvedUrl("."))
     return decodeURIComponent(s.indexOf("file://") === 0 ? s.substring(7) : s)
   }
-  readonly property string configPath: Quickshell.env("HOME") + "/.config/omarchy/extensions/instant-snippets.json"
+  readonly property string home: String(Quickshell.env("HOME") || "")
+  readonly property string defaultPath: home + "/.config/omarchy/extensions/" + Model.DATA_FILE
+  // Where the snippets file is kept, as it was typed in the settings: a
+  // folder, or the file itself. "" is the usual place. It is noted in a file
+  // that stays here, wherever the snippets go.
+  readonly property string locationPath: home + "/.config/omarchy/extensions/instant-snippets.location"
+  property string location: ""
+  property bool located: false      // the note has been read: it is known where the snippets are
+  property string locationError: ""
+  readonly property string configPath: Model.dataFile(location, home).path || defaultPath
   // The plan the engine is started from spells the triggers out as key
   // numbers, so it goes in a file of the user's own, in a directory that is
   // gone at logout, and never in a process's arguments. No fallback: without
@@ -57,15 +66,39 @@ Item {
     service.snippets = config.snippets
     service.dropped = config.dropped
     service.configError = config.error
+    service.settling = false
     service.schedule()
   }
 
   FileView {
+    id: locationFile
+    path: service.locationPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: service.applyLocation(text())
+    onLoadFailed: function(error) { service.applyLocation("") }
+    onFileChanged: reload()
+  }
+
+  // A note that cannot be gone by is not gone by: the usual place it is.
+  function applyLocation(text) {
+    if (service.relocation) return
+    var typed = String(text || "").split("\n")[0].trim()
+    var usable = Model.dataFile(typed, service.home).error === ""
+    service.locationError = usable ? "" : "The saved data location cannot be used; the default one is."
+    service.location = usable ? typed : ""
+    service.located = true
+  }
+
+  FileView {
     id: configFile
-    path: service.configPath
+    // Nothing is read until it is known where from.
+    path: service.located ? service.configPath : ""
     watchChanges: true
     printErrors: false
     onLoaded: {
+      // The file is on its way elsewhere: what is read next is what counts.
+      if (moveProc.running) return
       // A file made or edited by hand may be open to others: it is closed
       // to them every time it is read.
       Quickshell.execDetached(Model.tightening(service.configPath))
@@ -74,6 +107,7 @@ Item {
     // No file yet is no snippets yet. A file that is there and cannot be
     // read is not: taking it for empty would have the next save replace it.
     onLoadFailed: function(error) {
+      if (moveProc.running) return
       if (error === FileViewError.FileNotFound) { service.applyConfig(""); return }
       service.applyConfig("")
       service.configError = "unreadable"
@@ -88,6 +122,9 @@ Item {
 
   function save() {
     if (service.configError !== "" || service.dropped > 0) return
+    // What is here is about to give way to the file at the new place, and
+    // must not be written over it.
+    if (service.relocation || service.settling) return
     service.schedule()
     service.unsaved = Model.formatConfig({ enabled: service.expanding, shiftEnter: service.shiftEnter,
       undo: service.undoing, wordStart: service.wordStart, dateFormat: service.dateFormat,
@@ -96,7 +133,15 @@ Item {
   }
 
   function pumpSave() {
-    if (saveProc.running || service.unsaved === "") return
+    if (saveProc.running || moveProc.running) return
+    if (service.unsaved === "") {
+      // Everything is written where it was: now the file can go elsewhere.
+      var to = service.relocation
+      if (!to) return
+      moveProc.command = Model.moving(to.from, to.path, service.locationPath, to.typed)
+      moveProc.running = true
+      return
+    }
     saveProc.payload = service.unsaved
     service.unsaved = ""
     saveProc.stdinEnabled = true
@@ -126,6 +171,59 @@ Item {
     onTriggered: {
       saveProc.running = false
       service.saveError = "Failed to save the snippets file."
+    }
+  }
+
+  // ---------- Moving the snippets file ----------
+  // What is to become the location, while the file is taken there:
+  // { from, path, typed }.
+  property var relocation: null
+  // The file at the new place has not been read yet.
+  property bool settling: false
+
+  // Keeps the snippets file at `typed` from now on: see Model.dataFile().
+  // Returns why not, "" when it does or is on its way to.
+  function setLocation(typed) {
+    var text = String(typed || "").trim()
+    var found = Model.dataFile(text, service.home)
+    if (found.error !== "") return found.error
+    if (found.path === "" || found.path === service.defaultPath) text = ""
+    var path = found.path || service.defaultPath
+    if (!service.located || service.relocation || service.settling) return "Still busy with the last change."
+    service.locationError = ""
+    if (path === service.configPath) return ""
+    service.relocation = { from: service.configPath, path: path, typed: text }
+    service.pumpSave()
+    return ""
+  }
+
+  Process {
+    id: moveProc
+    onRunningChanged: running ? moveWatchdog.restart() : moveWatchdog.stop()
+    onExited: function(exitCode) {
+      var to = service.relocation
+      service.relocation = null
+      if (!to) return
+      if (exitCode !== 0) {
+        service.locationError = "Failed to use that location. Check that the folder exists and can be written to."
+        // The file is where it was, and may have been reported as changed meanwhile.
+        configFile.reload()
+        return
+      }
+      service.settling = true
+      service.location = to.typed
+    }
+  }
+
+  // A folder that does not answer, on a network say, is given up on.
+  Timer {
+    id: moveWatchdog
+    interval: 10000
+    onTriggered: {
+      service.relocation = null
+      moveProc.running = false
+      service.locationError = "Failed to use that location. Check that the folder exists and can be written to."
+      configFile.reload()
     }
   }
 

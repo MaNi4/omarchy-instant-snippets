@@ -26,8 +26,9 @@ omarchy plugin remove mani4.instant-snippets
 ```
 
 Disabling or removing the plugin removes its hook from Hyprland as it is
-unloaded. Your snippets stay in `~/.config/omarchy/extensions/instant-snippets.json`;
-delete that file if you do not want to keep them.
+unloaded. Your snippets stay in `~/.config/omarchy/extensions/instant-snippets.json`,
+or in the folder you chose in the settings; delete that file if you do not
+want to keep them.
 
 ## Features
 
@@ -140,6 +141,23 @@ only:
   ]
 }
 ```
+
+### Backing it up, or sharing it between computers
+
+**Data location** in the settings keeps the file somewhere else: type a
+folder, such as `~/Sync/snippets`, and press Enter or Apply. The file is then
+`instant-snippets.json` in that folder; a path ending in `.json` names the
+file itself. Leave the field empty to go back to the usual place.
+
+- If there is no snippets file at the new location, yours is moved there.
+- If there is one already, as on a second computer pointed at a synced
+  folder, that one is used. The file you had stays where it was, untouched
+  and no longer used.
+
+The location itself is kept in
+`~/.config/omarchy/extensions/instant-snippets.location`, a single line, on
+each computer. Changes that arrive in the file from elsewhere are picked up
+as they come. The file holds the settings too, so those are shared with it.
 
 The panel manages this file for you. Editing it by hand also works; changes
 are picked up immediately, and the file is closed to other users whenever it
