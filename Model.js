@@ -723,11 +723,34 @@ function dataFile(typed, home) {
   if (text === "") return { path: "", error: "" }
   if (/[\u0000-\u001f\u007f]/.test(text)) return { path: "", error: "The location cannot contain line breaks or tabs." }
   if (characters(text).length > MAX_LOCATION) return { path: "", error: "The location is too long." }
-  if (text === "~" || text.indexOf("~/") === 0) text = String(home || "") + text.substring(1)
+  if (text === "~" || text.indexOf("~/") === 0) {
+    // Without a home directory ~ would be the root of the disk.
+    if (String(home || "").charAt(0) !== "/") return { path: "", error: "The home directory is not known. Enter a full path." }
+    text = String(home) + text.substring(1)
+  }
   if (text.charAt(0) !== "/") return { path: "", error: "Enter a full path, such as ~/Sync/snippets." }
   var file = /\.json$/i.test(text)
   text = text.replace(/\/+/g, "/").replace(/(.)\/$/, "$1")
   return { path: file ? text : (text === "/" ? "" : text) + "/" + DATA_FILE, error: "" }
+}
+
+// What the note of the location says, out of the text of its file: the first
+// line of it, as it was typed. A note that cannot be gone by is not gone by.
+//   { location: "~/Sync/snippets", error: "" }
+function noted(text, home) {
+  var typed = String(text || "").split("\n")[0].trim()
+  if (dataFile(typed, home).error === "") return { location: typed, error: "" }
+  return { location: "", error: "The saved data location cannot be used. Using the default location instead." }
+}
+
+// What to make of there being no snippets file, given where it is kept. In
+// the usual place that is no snippets yet: "". Anywhere else moving() left a
+// file, so one that is not there is away for now (a disk not mounted, whose
+// mount point is an empty folder like any other; a sync not done), and
+// taking that for no snippets would have the next save write a new list
+// where the snippets are to come back.
+function absent(location) {
+  return String(location || "").trim() === "" ? "" : "missing"
 }
 
 // The command that takes the snippets file from `from` to `to` and notes
@@ -736,12 +759,18 @@ function dataFile(typed, home) {
 // and is left as it is, as is the one at `from` then. Otherwise the file is
 // copied, closed to others, and removed from `from` only once the note is
 // written, so that whatever fails the snippets are still where the note says.
+// With no file at either end an empty one is left at `to`: see absent().
+// Nothing but a file is taken for one at `to`, and `to` is never inside the
+// note, which would then be a folder.
 function moving(from, to, pointer, typed) {
-  var script = 'umask 077; [ -d "$2" ] && exit 1\n'
+  var script = 'umask 077; [ -e "$2" ] && [ ! -f "$2" ] && exit 1\n'
+    + 'case "$2" in "$3"|"$3"/*) exit 1;; esac\n'
+    + '[ -d "$3" ] && exit 1\n'
     + 'd=$(dirname -- "$2") && mkdir -p -- "$d" && [ -w "$d" ] || exit 1\n'
     + 'moved=\n'
-    + 'if [ ! -e "$2" ] && [ -f "$1" ]; then\n'
-    + '  rm -f -- "$2.new" && (set -C; cat -- "$1" > "$2.new") && mv -f -- "$2.new" "$2" || exit 1\n'
+    + 'if [ ! -e "$2" ]; then\n'
+    + '  rm -f -- "$2.new" && (set -C; if [ -f "$1" ]; then cat -- "$1"; fi > "$2.new")'
+    + ' && mv -f -- "$2.new" "$2" || exit 1\n'
     + '  moved=1\n'
     + 'fi\n'
     + 'if [ -n "$4" ]; then\n'
@@ -750,7 +779,8 @@ function moving(from, to, pointer, typed) {
     + 'else\n'
     + '  rm -f -- "$3"\n'
     + 'fi || { [ -z "$moved" ] || rm -f -- "$2"; exit 1; }\n'
-    + '[ -z "$moved" ] || rm -f -- "$1"\n'
+    // The empty file just made may be `from` itself, under another spelling.
+    + '[ -z "$moved" ] || [ "$1" -ef "$2" ] || rm -f -- "$1"\n'
     + 'exit 0'
   return ["sh", "-c", script, "sh", from, to, pointer, typed]
 }

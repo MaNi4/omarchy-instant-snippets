@@ -30,7 +30,10 @@ Item {
   readonly property string locationPath: home + "/.config/omarchy/extensions/instant-snippets.location"
   property string location: ""
   property bool located: false      // the note has been read: it is known where the snippets are
-  property string locationError: ""
+  property string locationError: "" // the note cannot be gone by
+  // The file could not be taken where it was last asked to go. Said beside
+  // what was typed for it, until that is changed.
+  property string moveError: ""
   readonly property string configPath: Model.dataFile(location, home).path || defaultPath
   // The plan the engine is started from spells the triggers out as key
   // numbers, so it goes in a file of the user's own, in a directory that is
@@ -75,7 +78,11 @@ Item {
     path: service.locationPath
     watchChanges: true
     printErrors: false
-    onLoaded: service.applyLocation(text())
+    onLoaded: {
+      // Written by hand it may be open to others: closed to them, as the snippets file is.
+      Quickshell.execDetached(Model.tightening(service.locationPath))
+      service.applyLocation(text())
+    }
     onLoadFailed: function(error) { service.applyLocation("") }
     onFileChanged: reload()
   }
@@ -83,10 +90,15 @@ Item {
   // A note that cannot be gone by is not gone by: the usual place it is.
   function applyLocation(text) {
     if (service.relocation) return
-    var typed = String(text || "").split("\n")[0].trim()
-    var usable = Model.dataFile(typed, service.home).error === ""
-    service.locationError = usable ? "" : "The saved data location cannot be used; the default one is."
-    service.location = usable ? typed : ""
+    var note = Model.noted(text, service.home)
+    service.locationError = note.error
+    // The note was changed from outside: what is here was read from the old
+    // place, and is not to be written over the file at the new one.
+    if (service.located && (Model.dataFile(note.location, service.home).path || service.defaultPath) !== service.configPath) {
+      service.unsaved = ""
+      service.settling = true
+    }
+    service.location = note.location
     service.located = true
   }
 
@@ -104,15 +116,28 @@ Item {
       Quickshell.execDetached(Model.tightening(service.configPath))
       service.applyConfig(text())
     }
-    // No file yet is no snippets yet. A file that is there and cannot be
-    // read is not: taking it for empty would have the next save replace it.
+    // No file yet, in the usual place, is no snippets yet. A file that is
+    // there and cannot be read is not, and nor is one missing from a place
+    // it was taken to: taking either for empty would have the next save
+    // replace it.
     onLoadFailed: function(error) {
       if (moveProc.running) return
-      if (error === FileViewError.FileNotFound) { service.applyConfig(""); return }
+      var why = error === FileViewError.FileNotFound ? Model.absent(service.location) : "unreadable"
+      // Looked for again, and still not there.
+      if (why === "missing" && service.configError === why) { service.settling = false; return }
       service.applyConfig("")
-      service.configError = "unreadable"
+      service.configError = why
     }
     onFileChanged: reload()
+  }
+
+  // A folder that comes back by being mounted is not reported as a change,
+  // so a file that is missing is looked for again now and then.
+  Timer {
+    interval: 5000
+    repeat: true
+    running: service.configError === "missing"
+    onTriggered: configFile.reload()
   }
 
   // The file holds whatever the snippets expand to, so it is created readable
@@ -190,7 +215,7 @@ Item {
     if (found.path === "" || found.path === service.defaultPath) text = ""
     var path = found.path || service.defaultPath
     if (!service.located || service.relocation || service.settling) return "Still busy with the last change."
-    service.locationError = ""
+    service.moveError = ""
     if (path === service.configPath) return ""
     service.relocation = { from: service.configPath, path: path, typed: text }
     service.pumpSave()
@@ -205,9 +230,7 @@ Item {
       service.relocation = null
       if (!to) return
       if (exitCode !== 0) {
-        service.locationError = "Failed to use that location. Check that the folder exists and can be written to."
-        // The file is where it was, and may have been reported as changed meanwhile.
-        configFile.reload()
+        service.moveFailed()
         return
       }
       service.settling = true
@@ -222,9 +245,16 @@ Item {
     onTriggered: {
       service.relocation = null
       moveProc.running = false
-      service.locationError = "Failed to use that location. Check that the folder exists and can be written to."
-      configFile.reload()
+      service.moveFailed()
     }
+  }
+
+  // The file is where the note says, which a move stopped halfway may have
+  // written already, and may have been reported as changed meanwhile.
+  function moveFailed() {
+    service.moveError = "Failed to use that location. Check that it can be written to."
+    locationFile.reload()
+    configFile.reload()
   }
 
   function add(trigger, replacement) {

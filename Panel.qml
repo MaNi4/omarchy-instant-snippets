@@ -94,6 +94,13 @@ Panel {
   onDataLocationChanged: if (!pathField.editing) pathField.text = dataLocation
   // Why what was typed for it cannot be gone by, "" when it can.
   property string pathProblem: ""
+  // Or why the file could not be taken there.
+  readonly property string pathTrouble: pathProblem !== "" ? pathProblem : service ? service.moveError : ""
+
+  function forgetPathProblem() {
+    pathProblem = ""
+    if (service) service.moveError = ""
+  }
 
   function rowOf(key) {
     for (var i = 0; i < rows.length; i++) if (rows[i].indexOf(key) >= 0) return i
@@ -117,7 +124,7 @@ Panel {
   function configure() {
     today = new Date()
     pathField.text = dataLocation
-    pathProblem = ""
+    forgetPathProblem()
     var names = app !== "" ? [app] : []
     var windows = ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
     for (var i = 0; i < windows.length; i++) {
@@ -139,6 +146,7 @@ Panel {
   // saving over it would lose what is in it.
   readonly property string blocked: !service ? "Starting"
     : service.configError === "unreadable" ? "The snippets file cannot be read. Fix its permissions to make changes here."
+    : service.configError === "missing" ? "The snippets file was not found at the data location. Check that the folder is available (mounted, synced), or change the location in the settings."
     : service.configError !== "" ? "The snippets file is not valid JSON. Fix it to make changes here."
     : service.dropped > 0 ? "The snippets file has " + service.dropped + (service.dropped === 1 ? " entry" : " entries")
       + " that cannot be used (a trigger or replacement that is too short, too long or repeated). Fix the file to make changes here."
@@ -1046,9 +1054,9 @@ Panel {
             hasCursor: root.hasCursor("path")
 
             onEditingChanged: if (editing) { root.cursorRow = root.rowOf("path"); root.cursorCol = 0 }
-            onEdited: root.pathProblem = ""
+            onEdited: root.forgetPathProblem()
             onEntered: root.relocate()
-            onEscaped: { text = root.dataLocation; root.pathProblem = ""; root.setCursor(root.rowOf("path"), 0) }
+            onEscaped: { text = root.dataLocation; root.forgetPathProblem(); root.setCursor(root.rowOf("path"), 0) }
             onTabbed: function(direction) { direction > 0 ? root.setCursor(root.rowOf("path"), 1) : root.setCursor(root.rowOf("path") - 1, 0) }
             onSteppedDown: root.setCursor(root.rowOf("path") + 1, 0)
           }
@@ -1072,11 +1080,11 @@ Panel {
           width: parent.width
           textFormat: Text.PlainText
           wrapMode: Text.Wrap
-          text: root.pathProblem !== "" ? root.pathProblem
+          text: root.pathTrouble !== "" ? root.pathTrouble
             : root.pathPending ? "Not applied yet. Press Enter or Apply to keep the snippets file there."
-            : "A folder for the snippets file, one that is backed up or synced say. "
-              + "A snippets file already there is used; otherwise yours is moved there."
-          color: root.pathProblem !== "" || root.pathPending ? root.accent : root.dimForeground
+            : "The folder to keep the snippets file in, for example one that is backed up or synced. "
+              + "If it already has a snippets file, that one is used; otherwise yours is moved there."
+          color: root.pathTrouble !== "" || root.pathPending ? root.accent : root.dimForeground
           font.family: root.ff
           font.pixelSize: Style.font.caption
         }
