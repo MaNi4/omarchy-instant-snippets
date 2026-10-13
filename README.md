@@ -26,8 +26,9 @@ omarchy plugin remove mani4.instant-snippets
 ```
 
 Disabling or removing the plugin removes its hook from Hyprland as it is
-unloaded. Your snippets stay in `~/.config/omarchy/extensions/instant-snippets.json`;
-delete that file if you do not want to keep them.
+unloaded. Your snippets stay in `~/.config/omarchy/extensions/instant-snippets.json`,
+or in the folder you chose in the settings; delete that file if you do not
+want to keep them.
 
 ## Features
 
@@ -59,7 +60,7 @@ delete that file if you do not want to keep them.
 
 | Snippets | Editor | Settings |
 |---|---|---|
-| ![The list of snippets with search](screenshots/list.png) | ![Editing a snippet](screenshots/editor.png) | ![Settings and excluded apps](screenshots/settings.png) |
+| ![The list of snippets with search](screenshots/list.png) | ![Editing a snippet](screenshots/editor.png) | ![Settings, data location and excluded apps](screenshots/settings.png) |
 
 ## How it works
 
@@ -140,6 +141,40 @@ only:
   ]
 }
 ```
+
+### Backing it up, or sharing it between computers
+
+**Data location** in the settings keeps the file somewhere else: type a
+folder, such as `~/Sync/snippets`, and press Enter or Apply. The file is then
+`instant-snippets.json` in that folder; a path ending in `.json` names the
+file itself. Leave the field empty to go back to the usual place.
+
+- If there is no snippets file at the new location, yours is moved there
+  (an empty one is made if you have none yet).
+- If there is one already, as on a second computer pointed at a synced
+  folder, that one is used. The file you had stays where it was, untouched
+  and no longer used.
+
+On a second computer, wait for the folder to finish syncing before pointing
+the plugin at it, so that the file found there is the one that is used.
+
+If the file is later not where it is kept, because a disk is not mounted or a
+sync has not finished, the panel says so and nothing is written until it is
+back; it is looked for again every few seconds. A new list is never started
+in its place: to start one, change the location.
+
+If the snippets are changed on two computers before they have synced, the
+sync tool keeps one version. With Syncthing the other is left beside the file
+as `instant-snippets.sync-conflict-….json`; a snippet that has gone missing
+is in there.
+
+Anyone who can write to that folder can change what your triggers type, so
+keep the file in a folder that is yours alone.
+
+The location itself is kept in
+`~/.config/omarchy/extensions/instant-snippets.location`, a single line, on
+each computer. Changes that arrive in the file from elsewhere are picked up
+as they come. The file holds the settings too, so those are shared with it.
 
 The panel manages this file for you. Editing it by hand also works; changes
 are picked up immediately, and the file is closed to other users whenever it

@@ -706,6 +706,85 @@ function tightening(path) {
   return ["sh", "-c", '[ "$(stat -L -c %a -- "$1" 2>/dev/null)" = 600 ] || chmod 600 -- "$1"', "sh", path]
 }
 
+// ---------- Where the snippets file is ----------
+// The file can be kept somewhere else, a folder that is backed up or synced
+// say. What the user typed for that is kept as typed, in a file of its own
+// that stays where it is.
+var DATA_FILE = "instant-snippets.json"
+var MAX_LOCATION = 512
+
+// The snippets file out of what was typed for it: a folder, which the file
+// is then in under its usual name, or the file itself when it ends in .json.
+// A leading ~ is the home directory.
+//   { path: "/home/me/Sync/instant-snippets.json", error: "" }
+// `path` is "" for nothing typed, which is the usual place.
+function dataFile(typed, home) {
+  var text = String(typed || "").trim()
+  if (text === "") return { path: "", error: "" }
+  if (/[\u0000-\u001f\u007f]/.test(text)) return { path: "", error: "The location cannot contain line breaks or tabs." }
+  if (characters(text).length > MAX_LOCATION) return { path: "", error: "The location is too long." }
+  if (text === "~" || text.indexOf("~/") === 0) {
+    // Without a home directory ~ would be the root of the disk.
+    if (String(home || "").charAt(0) !== "/") return { path: "", error: "The home directory is not known. Enter a full path." }
+    text = String(home) + text.substring(1)
+  }
+  if (text.charAt(0) !== "/") return { path: "", error: "Enter a full path, such as ~/Sync/snippets." }
+  var file = /\.json$/i.test(text)
+  text = text.replace(/\/+/g, "/").replace(/(.)\/$/, "$1")
+  return { path: file ? text : (text === "/" ? "" : text) + "/" + DATA_FILE, error: "" }
+}
+
+// What the note of the location says, out of the text of its file: the first
+// line of it, as it was typed. A note that cannot be gone by is not gone by.
+//   { location: "~/Sync/snippets", error: "" }
+function noted(text, home) {
+  var typed = String(text || "").split("\n")[0].trim()
+  if (dataFile(typed, home).error === "") return { location: typed, error: "" }
+  return { location: "", error: "The saved data location cannot be used. Using the default location instead." }
+}
+
+// What to make of there being no snippets file, given where it is kept. In
+// the usual place that is no snippets yet: "". Anywhere else moving() left a
+// file, so one that is not there is away for now (a disk not mounted, whose
+// mount point is an empty folder like any other; a sync not done), and
+// taking that for no snippets would have the next save write a new list
+// where the snippets are to come back.
+function absent(location) {
+  return String(location || "").trim() === "" ? "" : "missing"
+}
+
+// The command that takes the snippets file from `from` to `to` and notes
+// `typed` in `pointer` as where it now is ("" removes the note: the usual
+// place). A file already at `to` is the one to use, another computer's say,
+// and is left as it is, as is the one at `from` then. Otherwise the file is
+// copied, closed to others, and removed from `from` only once the note is
+// written, so that whatever fails the snippets are still where the note says.
+// With no file at either end an empty one is left at `to`: see absent().
+// Nothing but a file is taken for one at `to`, and `to` is never inside the
+// note, which would then be a folder.
+function moving(from, to, pointer, typed) {
+  var script = 'umask 077; [ -e "$2" ] && [ ! -f "$2" ] && exit 1\n'
+    + 'case "$2" in "$3"|"$3"/*) exit 1;; esac\n'
+    + '[ -d "$3" ] && exit 1\n'
+    + 'd=$(dirname -- "$2") && mkdir -p -- "$d" && [ -w "$d" ] || exit 1\n'
+    + 'moved=\n'
+    + 'if [ ! -e "$2" ]; then\n'
+    + '  rm -f -- "$2.new" && (set -C; if [ -f "$1" ]; then cat -- "$1"; fi > "$2.new")'
+    + ' && mv -f -- "$2.new" "$2" || exit 1\n'
+    + '  moved=1\n'
+    + 'fi\n'
+    + 'if [ -n "$4" ]; then\n'
+    + '  p=$(dirname -- "$3") && mkdir -p -- "$p" && rm -f -- "$3.new" && (set -C; printf "%s\\n" "$4" > "$3.new")'
+    + ' && mv -f -- "$3.new" "$3"\n'
+    + 'else\n'
+    + '  rm -f -- "$3"\n'
+    + 'fi || { [ -z "$moved" ] || rm -f -- "$2"; exit 1; }\n'
+    // The empty file just made may be `from` itself, under another spelling.
+    + '[ -z "$moved" ] || [ "$1" -ef "$2" ] || rm -f -- "$1"\n'
+    + 'exit 0'
+  return ["sh", "-c", script, "sh", from, to, pointer, typed]
+}
+
 // What `hyprctl eval` is given to start the engine: nothing but where the
 // plan is. The plan itself, which spells the triggers out as key numbers, is
 // in a file only its owner can read, not in a process's arguments.

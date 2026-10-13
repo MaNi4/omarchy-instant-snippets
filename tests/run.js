@@ -9,7 +9,7 @@ const root = path.join(__dirname, "..")
 const source = fs.readFileSync(path.join(root, "Model.js"), "utf8").replace(/^\.pragma library\s*$/m, "")
 const Keys = new Function(source + `\nreturn { activeLayout, characters, codePoint, asking, parseAnswers, parseAnswer, keyOf,
   keysOf, questions, slot, problem, parseConfig, formatConfig, preview, filter, plan, stop, resume, parseEvent,
-  typing, backspaces, loader, switchedKeyboard, writing, tightening, clean, clusters, undoable, reject, MAX_SNIPPETS, ASCII, LATIN, chunks, steps, expanding, undoing, render, backing, format, nextFormat, DATE_FORMATS, TIME_FORMATS, classKey, skipping, appName, bytes, pasted, pasting, PASTE_BYTES, contrast, legible, dimmed, mix, keypadKeys, lockedKeysOf, otherCase, capsLock, realKeyboard, fingerprint, NAMED, SHIFT, LEVEL3, SHORTCUT }`)()
+  typing, backspaces, loader, switchedKeyboard, writing, tightening, dataFile, noted, absent, moving, DATA_FILE, clean, clusters, undoable, reject, MAX_SNIPPETS, ASCII, LATIN, chunks, steps, expanding, undoing, render, backing, format, nextFormat, DATE_FORMATS, TIME_FORMATS, classKey, skipping, appName, bytes, pasted, pasting, PASTE_BYTES, contrast, legible, dimmed, mix, keypadKeys, lockedKeysOf, otherCase, capsLock, realKeyboard, fingerprint, NAMED, SHIFT, LEVEL3, SHORTCUT }`)()
 
 // What `xkbcli how-to-type --disable-compose` prints.
 const answer = rows => ["keysym: something (0x0000)", "", "=== Direct access ===", "",
@@ -320,6 +320,252 @@ const tests = {
     const c2 = Keys.tightening(link); execFileSync(c2[0], c2.slice(1))
     assert.strictEqual(fs2.statSync(file).ctimeMs, changed)
     fs2.rmSync(dir, { recursive: true })
+  },
+  "the snippets file is a folder's, or the .json file named"() {
+    const at = typed => Keys.dataFile(typed, "/home/me")
+    assert.deepStrictEqual(at(""), { path: "", error: "" })
+    assert.deepStrictEqual(at("   "), { path: "", error: "" })
+    assert.strictEqual(at("~/Sync/snippets").path, "/home/me/Sync/snippets/instant-snippets.json")
+    assert.strictEqual(at(" ~/Sync//snippets/ ").path, "/home/me/Sync/snippets/instant-snippets.json")
+    assert.strictEqual(at("~").path, "/home/me/instant-snippets.json")
+    assert.strictEqual(at("/").path, "/instant-snippets.json")
+    assert.strictEqual(at("/mnt/nas/my snippets.JSON").path, "/mnt/nas/my snippets.JSON")
+    // A folder that happens to end in .json, said to be one with a slash.
+    assert.strictEqual(at("/mnt/odd.json/").path, "/mnt/odd.json/instant-snippets.json")
+    assert.notStrictEqual(at("Sync/snippets").error, "")
+    assert.notStrictEqual(at("~other/snippets").error, "")
+    assert.notStrictEqual(at("/a\tb").error, "")
+    assert.notStrictEqual(at("/" + "x".repeat(600)).error, "")
+  },
+  "the snippets file is moved, unless there is one where it is to go"() {
+    const fs2 = require("fs"), os = require("os")
+    const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "isnip-"))
+    const old = path.join(dir, "config", "instant-snippets.json")
+    const pointer = path.join(dir, "config", "instant-snippets.location")
+    const there = path.join(dir, "Sync dir", "-snippets", "instant-snippets.json")
+    const move = (from, to, typed) => {
+      const c = Keys.moving(from, to, pointer, typed)
+      try { execFileSync(c[0], c.slice(1), { stdio: "ignore" }); return 0 } catch (error) { return error.status }
+    }
+    fs2.mkdirSync(path.dirname(old))
+    fs2.writeFileSync(old, "mine", { mode: 0o644 })
+    // To a folder that is not there yet: made, the file moved into it, closed to others.
+    assert.strictEqual(move(old, there, "~/Sync dir/-snippets"), 0)
+    assert.strictEqual(fs2.readFileSync(there, "utf8"), "mine")
+    assert.strictEqual(fs2.statSync(there).mode & 0o777, 0o600)
+    assert.ok(!fs2.existsSync(old))
+    assert.strictEqual(fs2.readFileSync(pointer, "utf8"), "~/Sync dir/-snippets\n")
+    // Back to the usual place: the note goes.
+    assert.strictEqual(move(there, old, ""), 0)
+    assert.strictEqual(fs2.readFileSync(old, "utf8"), "mine")
+    assert.ok(!fs2.existsSync(there) && !fs2.existsSync(pointer))
+    // A file already there is the one to use: neither is touched.
+    fs2.writeFileSync(there, "theirs")
+    assert.strictEqual(move(old, there, "/sync"), 0)
+    assert.strictEqual(fs2.readFileSync(there, "utf8"), "theirs")
+    assert.strictEqual(fs2.readFileSync(old, "utf8"), "mine")
+    assert.strictEqual(fs2.readFileSync(pointer, "utf8"), "/sync\n")
+    // Nothing to move and nothing there: an empty file is left there, and the note written.
+    const empty = path.join(dir, "empty", "instant-snippets.json")
+    assert.strictEqual(move(path.join(dir, "none.json"), empty, "/empty"), 0)
+    assert.strictEqual(fs2.readFileSync(empty, "utf8"), "")
+    assert.strictEqual(fs2.readFileSync(pointer, "utf8"), "/empty\n")
+    // A place that cannot be written to: the file and the note stay as they were.
+    const shut = path.join(dir, "shut")
+    fs2.mkdirSync(shut, { mode: 0o500 })
+    assert.notStrictEqual(move(old, path.join(shut, "instant-snippets.json"), "/shut"), 0)
+    assert.notStrictEqual(move(old, path.join(shut, "deeper", "instant-snippets.json"), "/shut/deeper"), 0)
+    assert.notStrictEqual(move(old, path.dirname(there), "/a-folder.json"), 0)
+    assert.strictEqual(fs2.readFileSync(old, "utf8"), "mine")
+    assert.strictEqual(fs2.readFileSync(pointer, "utf8"), "/empty\n")
+    // The note cannot be written: the copy is taken back, the file stays.
+    const fresh = path.join(dir, "fresh", "instant-snippets.json")
+    const c = Keys.moving(old, fresh, path.join(shut, "note"), "/fresh")
+    assert.throws(() => execFileSync(c[0], c.slice(1), { stdio: "ignore" }))
+    assert.ok(!fs2.existsSync(fresh))
+    assert.strictEqual(fs2.readFileSync(old, "utf8"), "mine")
+    fs2.chmodSync(shut, 0o700)
+    fs2.rmSync(dir, { recursive: true })
+  },
+  "a location is not made up when the home directory is not known"() {
+    assert.notStrictEqual(Keys.dataFile("~", "").error, "")
+    assert.notStrictEqual(Keys.dataFile("~/Sync", "").error, "")
+    assert.notStrictEqual(Keys.dataFile("~/Sync", undefined).error, "")
+    assert.strictEqual(Keys.dataFile("/mnt/nas", "").path, "/mnt/nas/instant-snippets.json")
+    // A home written with a slash at its end is the same home.
+    assert.strictEqual(Keys.dataFile("~/Sync", "/home/me/").path, "/home/me/Sync/instant-snippets.json")
+    assert.strictEqual(Keys.dataFile("~/.json", "/home/me").path, "/home/me/.json")
+    assert.strictEqual(Keys.dataFile("/a\u007fb", "/home/me").path, "")
+    assert.notStrictEqual(Keys.dataFile("/a\nb", "/home/me").error, "")
+    assert.notStrictEqual(Keys.dataFile("$HOME/Sync", "/home/me").error, "")
+  },
+  "the note of where the snippets are is read as one line, and gone by only if it can be"() {
+    const read = text => Keys.noted(text, "/home/me")
+    assert.deepStrictEqual(read(""), { location: "", error: "" })
+    assert.deepStrictEqual(read(undefined), { location: "", error: "" })
+    assert.deepStrictEqual(read("\n\n"), { location: "", error: "" })
+    assert.deepStrictEqual(read("~/Sync/snippets\n"), { location: "~/Sync/snippets", error: "" })
+    // Written on another system, or with a mark at its start.
+    assert.deepStrictEqual(read("﻿~/Sync/snippets\r\n"), { location: "~/Sync/snippets", error: "" })
+    // Only the first line is the location.
+    assert.deepStrictEqual(read("/mnt/nas\n/etc\n"), { location: "/mnt/nas", error: "" })
+    // What cannot be a location is not one: the usual place it is, and that is said.
+    for (const bad of ["Sync/snippets\n", "~other\n", "/a\tb\n", "/" + "x".repeat(600) + "\n"]) {
+      const got = read(bad)
+      assert.strictEqual(got.location, "")
+      assert.notStrictEqual(got.error, "")
+    }
+    assert.notStrictEqual(Keys.noted("~/Sync\n", "").error, "")
+  },
+  "what was typed for the location is noted as typed, and never run"() {
+    const fs2 = require("fs"), os = require("os")
+    const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "isnip-"))
+    const old = path.join(dir, "instant-snippets.json")
+    const pointer = path.join(dir, "instant-snippets.location")
+    const marker = path.join(dir, "ran")
+    fs2.writeFileSync(old, "mine")
+    const odd = `it's "$(touch ${marker})" \`touch ${marker}\`; touch ${marker} #`
+    const there = path.join(dir, odd, "-x", "instant-snippets.json")
+    const typed = "~/" + odd + " -n \\n %s $4"
+    const c = Keys.moving(old, there, pointer, typed)
+    execFileSync(c[0], c.slice(1), { stdio: "ignore", cwd: dir })
+    assert.ok(!fs2.existsSync(marker))
+    assert.strictEqual(fs2.readFileSync(there, "utf8"), "mine")
+    assert.strictEqual(fs2.readFileSync(pointer, "utf8"), typed + "\n")
+    // The note is the user's alone, as the snippets are, and so is a folder made for them.
+    assert.strictEqual(fs2.statSync(pointer).mode & 0o777, 0o600)
+    assert.strictEqual(fs2.statSync(path.dirname(there)).mode & 0o777, 0o700)
+    // None of it is in the script itself.
+    assert.ok(!c[2].includes("touch"))
+    fs2.rmSync(dir, { recursive: true })
+  },
+  "the snippets file is not moved onto or through what is not a file"() {
+    const fs2 = require("fs"), os = require("os")
+    const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "isnip-"))
+    const old = path.join(dir, "instant-snippets.json")
+    const pointer = path.join(dir, "instant-snippets.location")
+    const move = (from, to, typed) => {
+      const c = Keys.moving(from, to, pointer, typed)
+      try { execFileSync(c[0], c.slice(1), { stdio: "ignore", timeout: 5000 }); return 0 } catch (error) { return error.status === null ? "hung" : error.status }
+    }
+    fs2.writeFileSync(old, "mine")
+    // A pipe where the file would be is not a snippets file to use.
+    const pipe = path.join(dir, "pipe", "instant-snippets.json")
+    fs2.mkdirSync(path.dirname(pipe))
+    execFileSync("mkfifo", [pipe])
+    assert.ok(move(old, pipe, "/pipe") > 0)
+    assert.strictEqual(fs2.readFileSync(old, "utf8"), "mine")
+    assert.ok(!fs2.existsSync(pointer))
+    // A link to nowhere is replaced, not written through.
+    const nowhere = path.join(dir, "nowhere")
+    const linked = path.join(dir, "linked", "instant-snippets.json")
+    fs2.mkdirSync(path.dirname(linked))
+    fs2.symlinkSync(nowhere, linked)
+    assert.strictEqual(move(old, linked, "/linked"), 0)
+    assert.ok(!fs2.existsSync(nowhere))
+    assert.ok(fs2.lstatSync(linked).isFile())
+    assert.strictEqual(fs2.readFileSync(linked, "utf8"), "mine")
+    // Nor is a leftover of an earlier move that was made a link to somewhere else.
+    const elsewhere = path.join(dir, "elsewhere")
+    const next = path.join(dir, "next", "instant-snippets.json")
+    fs2.writeFileSync(elsewhere, "untouched")
+    fs2.mkdirSync(path.dirname(next))
+    fs2.symlinkSync(elsewhere, next + ".new")
+    fs2.symlinkSync(elsewhere, pointer + ".new")
+    assert.strictEqual(move(linked, next, "/next"), 0)
+    assert.strictEqual(fs2.readFileSync(elsewhere, "utf8"), "untouched")
+    assert.strictEqual(fs2.readFileSync(next, "utf8"), "mine")
+    assert.ok(fs2.lstatSync(pointer).isFile())
+    // A file kept through a link: what it leads to is copied and stays, the link goes.
+    const real = path.join(dir, "real.json")
+    fs2.writeFileSync(real, "dotfiles")
+    fs2.symlinkSync(real, old)
+    const last = path.join(dir, "last", "instant-snippets.json")
+    assert.strictEqual(move(old, last, "/last"), 0)
+    assert.strictEqual(fs2.readFileSync(last, "utf8"), "dotfiles")
+    assert.ok(fs2.lstatSync(last).isFile())
+    assert.strictEqual(fs2.readFileSync(real, "utf8"), "dotfiles")
+    assert.ok(!fs2.existsSync(old))
+    fs2.rmSync(dir, { recursive: true })
+  },
+  "the snippets file is not put where the note of its place goes"() {
+    const fs2 = require("fs"), os = require("os")
+    const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "isnip-"))
+    const old = path.join(dir, "instant-snippets.json")
+    const pointer = path.join(dir, "instant-snippets.location")
+    const move = (to, typed) => {
+      const c = Keys.moving(old, to, pointer, typed)
+      try { execFileSync(c[0], c.slice(1), { stdio: "ignore" }); return 0 } catch (error) { return error.status }
+    }
+    fs2.writeFileSync(old, "mine")
+    // The note would become a folder, and could not be read the next time.
+    assert.notStrictEqual(move(path.join(pointer, "instant-snippets.json"), pointer), 0)
+    assert.notStrictEqual(move(path.join(pointer, "deeper", "mine.json"), pointer + "/deeper/mine.json"), 0)
+    assert.ok(!fs2.existsSync(pointer))
+    assert.strictEqual(fs2.readFileSync(old, "utf8"), "mine")
+    // A folder already where the note goes: nothing is moved, since it could not be said where to.
+    fs2.mkdirSync(pointer)
+    const there = path.join(dir, "there", "instant-snippets.json")
+    assert.notStrictEqual(move(there, "/there"), 0)
+    assert.ok(!fs2.existsSync(there))
+    assert.strictEqual(fs2.readFileSync(old, "utf8"), "mine")
+    assert.deepStrictEqual(fs2.readdirSync(pointer), [])
+    fs2.rmSync(dir, { recursive: true })
+  },
+  "the snippets file under another spelling of where it is stays as it is"() {
+    const fs2 = require("fs"), os = require("os")
+    const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "isnip-"))
+    const old = path.join(dir, "config", "instant-snippets.json")
+    const pointer = path.join(dir, "config", "instant-snippets.location")
+    fs2.mkdirSync(path.dirname(old))
+    fs2.writeFileSync(old, "mine")
+    fs2.symlinkSync(path.join(dir, "config"), path.join(dir, "alias"))
+    for (const same of [dir + "/config/../config/instant-snippets.json", dir + "/alias/instant-snippets.json", old]) {
+      const c = Keys.moving(old, same, pointer, "/same")
+      execFileSync(c[0], c.slice(1), { stdio: "ignore" })
+      assert.strictEqual(fs2.readFileSync(old, "utf8"), "mine")
+    }
+    fs2.rmSync(dir, { recursive: true })
+  },
+  "a place with no snippets file is given an empty one, so that one missing later is not taken for none"() {
+    const fs2 = require("fs"), os = require("os")
+    const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "isnip-"))
+    const pointer = path.join(dir, "instant-snippets.location")
+    const none = path.join(dir, "none.json")
+    const fresh = path.join(dir, "fresh", "instant-snippets.json")
+    let c = Keys.moving(none, fresh, pointer, "/fresh")
+    execFileSync(c[0], c.slice(1), { stdio: "ignore" })
+    assert.strictEqual(fs2.readFileSync(fresh, "utf8"), "")
+    assert.strictEqual(fs2.statSync(fresh).mode & 0o777, 0o600)
+    assert.deepStrictEqual(Keys.parseConfig(fs2.readFileSync(fresh, "utf8")).snippets, [])
+    assert.strictEqual(Keys.parseConfig(fs2.readFileSync(fresh, "utf8")).error, "")
+    assert.strictEqual(fs2.readFileSync(pointer, "utf8"), "/fresh\n")
+    // The same place under another spelling, with nothing in it: the file made is not then removed as the old one.
+    const again = path.join(dir, "again", "instant-snippets.json")
+    c = Keys.moving(dir + "/again/../again/instant-snippets.json", again, pointer, "/again")
+    execFileSync(c[0], c.slice(1), { stdio: "ignore" })
+    assert.strictEqual(fs2.readFileSync(again, "utf8"), "")
+    // The note cannot be written: the empty file is taken back too.
+    const shut = path.join(dir, "shut")
+    fs2.mkdirSync(shut, { mode: 0o500 })
+    const other = path.join(dir, "other", "instant-snippets.json")
+    c = Keys.moving(none, other, path.join(shut, "note"), "/other")
+    assert.throws(() => execFileSync(c[0], c.slice(1), { stdio: "ignore" }))
+    assert.ok(!fs2.existsSync(other))
+    // A file already there is not emptied, whatever happens to the note.
+    fs2.mkdirSync(path.dirname(other), { recursive: true })
+    fs2.writeFileSync(other, "theirs")
+    assert.throws(() => execFileSync(c[0], c.slice(1), { stdio: "ignore" }))
+    assert.strictEqual(fs2.readFileSync(other, "utf8"), "theirs")
+    fs2.chmodSync(shut, 0o700)
+    fs2.rmSync(dir, { recursive: true })
+  },
+  "a snippets file that is not where it is kept is said to be missing, and only in the usual place taken for none"() {
+    assert.strictEqual(Keys.absent(""), "")
+    assert.strictEqual(Keys.absent("  "), "")
+    assert.strictEqual(Keys.absent("~/Sync/snippets"), "missing")
+    assert.strictEqual(Keys.absent("/mnt/nas"), "missing")
+    assert.strictEqual(Keys.absent("/mnt/nas/mine.json"), "missing")
   },
   "the engine is started from a private file, not from arguments"() {
     assert.strictEqual(Keys.loader("/run/user/1000/instant-snippets/plan.lua"),
