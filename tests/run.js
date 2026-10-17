@@ -186,7 +186,7 @@ const tests = {
     assert.strictEqual(Keys.problem([email], "!em", "x", 0), "")
   },
   "the config file is read defensively"() {
-    const empty = { enabled: true, shiftEnter: true, undo: true, wordStart: true, dateFormat: "yyyy-MM-dd",
+    const empty = { enabled: true, shiftEnter: true, undo: true, wordStart: true, coloredIcon: true, dateFormat: "yyyy-MM-dd",
       timeFormat: "HH:mm", skipped: [], snippets: [], dropped: 0, error: "" }
     assert.deepStrictEqual(Keys.parseConfig(""), empty)
     assert.notStrictEqual(Keys.parseConfig("{").error, "")
@@ -196,7 +196,7 @@ const tests = {
     assert.deepStrictEqual(config.snippets, [email, { trigger: "ok", replacement: "fine" }])
     // The three that were not usable are counted, so the file is not written over.
     assert.strictEqual(config.dropped, 3)
-    const full = { enabled: false, shiftEnter: false, undo: false, wordStart: false, dateFormat: "d.M.yyyy",
+    const full = { enabled: false, shiftEnter: false, undo: false, wordStart: false, coloredIcon: false, dateFormat: "d.M.yyyy",
       timeFormat: "h:mm AP", dropped: 0, skipped: ["org.keepassxc.KeePassXC", "foot"], snippets: [email], error: "" }
     assert.deepStrictEqual(Keys.parseConfig(Keys.formatConfig(full)), full)
     const odd = Keys.parseConfig(JSON.stringify({ lineBreaksWithShiftEnter: "yes", excludedApps: ["a", "a", 5, "", "b\nc", "ok"] }))
