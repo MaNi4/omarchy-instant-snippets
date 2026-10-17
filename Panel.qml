@@ -71,6 +71,7 @@ Panel {
   readonly property bool shiftEnter: service ? service.shiftEnter : false
   readonly property bool undo: service ? service.undoing : false
   readonly property bool wordStart: service ? service.wordStart : false
+  readonly property bool coloredIcon: service ? service.coloredIcon : true
   readonly property var skipped: service ? service.skipped : []
 
   // ---------- Settings ----------
@@ -330,7 +331,7 @@ Panel {
   readonly property var rows: composing
     ? [["trigger"], ["text"], editing >= 0 ? ["save", "cancel", "delete"] : ["save", "cancel"]]
     : configuring
-    ? [["back"], ["expanding"], ["shiftEnter"], ["undo"], ["wordStart"], ["dateFormat"], ["timeFormat"], ["path", "apply"]]
+    ? [["back"], ["expanding"], ["shiftEnter"], ["undo"], ["wordStart"], ["coloredIcon"], ["dateFormat"], ["timeFormat"], ["path", "apply"]]
       .concat(skipped.map(function(name, index) { return ["skip:" + index] }))
       .concat(openApps.map(function(name, index) { return ["open:" + index] }))
     : [snippets.length > 0 ? ["filter", "new", "settings"] : ["new", "settings"]]
@@ -369,6 +370,7 @@ Panel {
     else if (key === "shiftEnter") { if (service && blocked === "") service.setShiftEnter(!shiftEnter) }
     else if (key === "undo") { if (service && blocked === "") service.setUndoing(!undo) }
     else if (key === "wordStart") { if (service && blocked === "") service.setWordStart(!wordStart) }
+    else if (key === "coloredIcon") { if (service && blocked === "") service.setColoredIcon(!coloredIcon) }
     else if (key === "dateFormat") { if (service && blocked === "") service.nextDateFormat() }
     else if (key === "timeFormat") { if (service && blocked === "") service.nextTimeFormat() }
     else if (key === "path") pathField.focusInput()
@@ -400,6 +402,10 @@ Panel {
     bar: root.bar
     text: "\u{f060e}" // nf-md-form-textbox
     active: root.listening && root.trouble === ""
+    // Without the colour, the icon is full strength while snippets expand
+    // and faded while they do not.
+    useActiveColor: root.coloredIcon
+    dimmed: !root.coloredIcon && !active
     tooltipText: root.blocked !== "" ? "Instant Snippets"
       : root.trouble !== "" ? "Instant Snippets  ·  " + root.trouble
       : !root.expanding ? "Instant Snippets  ·  disabled"
@@ -1006,6 +1012,13 @@ Panel {
           key: "wordStart"
           label: "Expand only at the start of a word"
           checked: root.wordStart
+        }
+
+        SwitchRow {
+          visible: root.configuring
+          key: "coloredIcon"
+          label: "Colour the bar icon while expanding"
+          checked: root.coloredIcon
         }
 
         // What {date} and {time} look like, shown as they would be typed

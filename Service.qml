@@ -47,6 +47,7 @@ Item {
   property bool shiftEnter: true    // line breaks typed as Shift+Enter
   property bool undoing: true       // Backspace right after a snippet takes it back
   property bool wordStart: true     // triggers expand only at the start of a word
+  property bool coloredIcon: true   // the bar icon takes the accent colour while expanding
   property string dateFormat: Model.DATE_FORMATS[0]   // what {date} looks like
   property string timeFormat: Model.TIME_FORMATS[0]   // what {time} looks like
   property var skipped: []          // classes of the windows to leave alone
@@ -63,6 +64,7 @@ Item {
     service.shiftEnter = config.shiftEnter
     service.undoing = config.undo
     service.wordStart = config.wordStart
+    service.coloredIcon = config.coloredIcon
     service.dateFormat = config.dateFormat
     service.timeFormat = config.timeFormat
     service.skipped = config.skipped
@@ -152,7 +154,7 @@ Item {
     if (service.relocation || service.settling) return
     service.schedule()
     service.unsaved = Model.formatConfig({ enabled: service.expanding, shiftEnter: service.shiftEnter,
-      undo: service.undoing, wordStart: service.wordStart, dateFormat: service.dateFormat,
+      undo: service.undoing, wordStart: service.wordStart, coloredIcon: service.coloredIcon, dateFormat: service.dateFormat,
       timeFormat: service.timeFormat, skipped: service.skipped, snippets: service.snippets })
     service.pumpSave()
   }
@@ -295,6 +297,11 @@ Item {
 
   function setWordStart(wordStart) {
     service.wordStart = wordStart
+    service.save()
+  }
+
+  function setColoredIcon(coloredIcon) {
+    service.coloredIcon = coloredIcon
     service.save()
   }
 
