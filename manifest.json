@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "mani4.instant-snippets",
   "name": "Instant Snippets",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "MaNi4",
   "license": "MIT",
   "description": "Type a short trigger such as !em in any app and it is replaced with the text you saved for it, instantly. Hyprland passes key presses to a small script the plugin loads into Hyprland itself, so there is no daemon and no extra package",
