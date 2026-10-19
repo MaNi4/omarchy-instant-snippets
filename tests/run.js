@@ -186,21 +186,26 @@ const tests = {
     assert.strictEqual(Keys.problem([email], "!em", "x", 0), "")
   },
   "the config file is read defensively"() {
-    const empty = { enabled: true, shiftEnter: true, undo: true, wordStart: true, coloredIcon: true, dateFormat: "yyyy-MM-dd",
-      timeFormat: "HH:mm", skipped: [], snippets: [], dropped: 0, error: "" }
+    const empty = { enabled: true, shiftEnter: true, undo: true, wordStart: true, coloredIcon: true,
+      dateFormat: "yyyy-MM-dd", timeFormat: "HH:mm", skipped: [], snippets: [], dropped: 0, error: "" }
     assert.deepStrictEqual(Keys.parseConfig(""), empty)
     assert.notStrictEqual(Keys.parseConfig("{").error, "")
     const config = Keys.parseConfig(JSON.stringify({ enabled: false, snippets: [
       email, { trigger: "!em", replacement: "twice" }, { trigger: 5, replacement: "x" }, null, { trigger: "ok", replacement: "fine", extra: 1 }] }))
     assert.strictEqual(config.enabled, false)
+    // A file from before a setting existed keeps its default.
+    assert.strictEqual(config.coloredIcon, true)
     assert.deepStrictEqual(config.snippets, [email, { trigger: "ok", replacement: "fine" }])
     // The three that were not usable are counted, so the file is not written over.
     assert.strictEqual(config.dropped, 3)
-    const full = { enabled: false, shiftEnter: false, undo: false, wordStart: false, coloredIcon: false, dateFormat: "d.M.yyyy",
-      timeFormat: "h:mm AP", dropped: 0, skipped: ["org.keepassxc.KeePassXC", "foot"], snippets: [email], error: "" }
+    const full = { enabled: false, shiftEnter: false, undo: false, wordStart: false, coloredIcon: false,
+      dateFormat: "d.M.yyyy", timeFormat: "h:mm AP", dropped: 0, skipped: ["org.keepassxc.KeePassXC", "foot"],
+      snippets: [email], error: "" }
     assert.deepStrictEqual(Keys.parseConfig(Keys.formatConfig(full)), full)
-    const odd = Keys.parseConfig(JSON.stringify({ lineBreaksWithShiftEnter: "yes", excludedApps: ["a", "a", 5, "", "b\nc", "ok"] }))
+    const odd = Keys.parseConfig(JSON.stringify({ lineBreaksWithShiftEnter: "yes", coloredIcon: "no",
+      excludedApps: ["a", "a", 5, "", "b\nc", "ok"] }))
     assert.strictEqual(odd.shiftEnter, true)
+    assert.strictEqual(odd.coloredIcon, true)
     assert.deepStrictEqual(odd.skipped, ["a", "ok"])
   },
   "contrast is WCAG's"() {

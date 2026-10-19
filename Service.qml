@@ -154,8 +154,8 @@ Item {
     if (service.relocation || service.settling) return
     service.schedule()
     service.unsaved = Model.formatConfig({ enabled: service.expanding, shiftEnter: service.shiftEnter,
-      undo: service.undoing, wordStart: service.wordStart, coloredIcon: service.coloredIcon, dateFormat: service.dateFormat,
-      timeFormat: service.timeFormat, skipped: service.skipped, snippets: service.snippets })
+      undo: service.undoing, wordStart: service.wordStart, coloredIcon: service.coloredIcon,
+      dateFormat: service.dateFormat, timeFormat: service.timeFormat, skipped: service.skipped, snippets: service.snippets })
     service.pumpSave()
   }
 

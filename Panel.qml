@@ -402,8 +402,8 @@ Panel {
     bar: root.bar
     text: "\u{f060e}" // nf-md-form-textbox
     active: root.listening && root.trouble === ""
-    // Without the colour, the icon is full strength while snippets expand
-    // and faded while they do not.
+    // Uncoloured, the icon keeps the bar's colour: full strength while
+    // snippets expand, faded while they do not.
     useActiveColor: root.coloredIcon
     dimmed: !root.coloredIcon && !active
     tooltipText: root.blocked !== "" ? "Instant Snippets"
@@ -1017,7 +1017,7 @@ Panel {
         SwitchRow {
           visible: root.configuring
           key: "coloredIcon"
-          label: "Colour the bar icon while expanding"
+          label: "Color the bar icon while expanding"
           checked: root.coloredIcon
         }
 
