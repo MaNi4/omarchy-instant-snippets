@@ -351,8 +351,8 @@ function problem(snippets, trigger, text, at) {
 //   { enabled: true, shiftEnter: true, undo: true, skipped: [], snippets: [{ trigger: "!em", replacement: "me@example.com" }], error: "" }
 // The file's own names for these are longer: see formatConfig().
 function parseConfig(text) {
-  var result = { enabled: true, shiftEnter: true, undo: true, wordStart: true, dateFormat: DATE_FORMATS[0],
-    timeFormat: TIME_FORMATS[0], skipped: [], snippets: [], dropped: 0, error: "" }
+  var result = { enabled: true, shiftEnter: true, undo: true, wordStart: true, coloredIcon: true,
+    dateFormat: DATE_FORMATS[0], timeFormat: TIME_FORMATS[0], skipped: [], snippets: [], dropped: 0, error: "" }
   if (String(text || "").trim() === "") return result
   var config
   try { config = JSON.parse(text) } catch (e) {
@@ -364,6 +364,7 @@ function parseConfig(text) {
   if (config.lineBreaksWithShiftEnter === false) result.shiftEnter = false
   if (config.undoWithBackspace === false) result.undo = false
   if (config.expandOnlyAtWordStart === false) result.wordStart = false
+  if (config.coloredIcon === false) result.coloredIcon = false
   result.dateFormat = format(DATE_FORMATS, config.dateFormat)
   result.timeFormat = format(TIME_FORMATS, config.timeFormat)
   var apps = Array.isArray(config.excludedApps) ? config.excludedApps : []
@@ -387,8 +388,8 @@ function parseConfig(text) {
 function formatConfig(config) {
   return JSON.stringify({
     enabled: config.enabled, lineBreaksWithShiftEnter: config.shiftEnter, undoWithBackspace: config.undo,
-    expandOnlyAtWordStart: config.wordStart, dateFormat: config.dateFormat, timeFormat: config.timeFormat,
-    excludedApps: config.skipped, snippets: config.snippets
+    expandOnlyAtWordStart: config.wordStart, coloredIcon: config.coloredIcon, dateFormat: config.dateFormat,
+    timeFormat: config.timeFormat, excludedApps: config.skipped, snippets: config.snippets
   }, null, 2) + "\n"
 }
 

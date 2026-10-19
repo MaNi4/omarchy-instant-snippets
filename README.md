@@ -55,6 +55,10 @@ want to keep them.
   space. Can be turned off.
 - **Layouts**: triggers work on every keyboard layout that can type them, and
   follow layout switches. Digits and `+ - * / .` also count from the number pad.
+- **Colored bar icon**: the bar icon takes the accent color while snippets
+  expand. Can be turned off; the icon then keeps the bar's own color and is
+  faded while snippets do not expand: when expansion is disabled, when there
+  are no snippets, or when something went wrong.
 
 ## Screenshots
 
@@ -133,6 +137,7 @@ only:
   "lineBreaksWithShiftEnter": true,
   "undoWithBackspace": true,
   "expandOnlyAtWordStart": true,
+  "coloredIcon": true,
   "dateFormat": "yyyy-MM-dd",
   "timeFormat": "HH:mm",
   "excludedApps": ["org.keepassxc.KeePassXC"],
