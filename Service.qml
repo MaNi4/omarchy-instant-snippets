@@ -340,6 +340,11 @@ Item {
   // the one in hand; each process remembers which it was started for, so
   // what comes back for one that was given up is not taken for the next.
   property int plan: 0
+  // Which step of the plan is running and since when, for the journal when
+  // one fails. Nothing of the snippets is in it.
+  property string step: ""
+  property double stepAt: 0
+  function begin(name) { service.step = name; service.stepAt = Date.now() }
   property int reloads: 0          // times Hyprland has reloaded its config, and dropped the engine
   property bool planning: false
   property bool planAgain: false
@@ -371,6 +376,7 @@ Item {
       reloads: service.reloads }
     planWatchdog.restart()
     devicesProc.plan = service.plan
+    service.begin("hyprctl devices")
     devicesProc.running = true
   }
 
@@ -382,12 +388,15 @@ Item {
   }
 
   // A tool that is missing or hangs must not leave the service stuck: the
-  // step it was on is given eight seconds, then everything of this plan is
-  // stopped.
+  // step it was on is given half a minute, then everything of this plan is
+  // stopped. Not less: the shell builds every plugin again when one of them
+  // is reloaded, and at login, and is busy for seconds while the plan is
+  // made, so a step that takes one second can look like eight.
   Timer {
     id: planWatchdog
-    interval: 8000
+    interval: 30000
     onTriggered: {
+      var starting = planFileProc.running || evalProc.running
       service.plan += 1
       devicesProc.running = false
       keysProc.running = false
@@ -396,21 +405,32 @@ Item {
       // Whether the engine was started or not is no longer known.
       service.listening = false
       service.installed = ""
-      service.failPlan("Failed to read the keyboard layout.")
+      service.failPlan(starting ? "Failed to start text expansion in Hyprland." : "Failed to read the keyboard layout.", "timed out")
     }
   }
 
-  // A plan that failed (a tool slow to answer at login, say) is tried again
-  // a little later, a few times, rather than left until something changes.
+  // A plan that failed (a tool slow to answer at login or after a wake from
+  // sleep, say) is tried again a little later, a few times, rather than left
+  // until something changes. Only when the last try fails too is the user
+  // told: one that works on the next try was never worth a notification.
   property int retries: 0
+  readonly property var retryDelays: [5000, 15000, 30000]
 
-  function failPlan(message) {
-    service.engineError = message
-    service.tell(message)
-    if (service.retries < 3) {
+  function retryOrTell(message) {
+    if (service.retries < service.retryDelays.length) {
+      retryTimer.interval = service.retryDelays[service.retries]
       service.retries += 1
       retryTimer.restart()
+    } else {
+      service.tell(message)
     }
+  }
+
+  function failPlan(message, detail) {
+    console.warn("instant-snippets: plan failed at " + service.step + " after "
+      + (Date.now() - service.stepAt) + " ms" + (detail ? ": " + detail : "") + " (try " + (service.retries + 1) + ")")
+    service.engineError = message
+    service.retryOrTell(message)
     service.endPlan()
   }
 
@@ -422,7 +442,7 @@ Item {
 
   Timer {
     id: retryTimer
-    interval: 30000
+    interval: 5000
     onTriggered: service.schedule()
   }
 
@@ -508,6 +528,7 @@ Item {
     keysProc.asked = service.pending.slice(0, count)
     service.pending = service.pending.slice(count)
     keysProc.command = Model.asking(layout, keysProc.asked)
+    service.begin("xkbcli, " + keysProc.asked.length + " questions")
     keysProc.running = true
   }
 
@@ -525,7 +546,8 @@ Item {
         // No layout is without a Backspace key: xkbcli is missing or failed.
         if (!answered || (known["name:BackSpace"] || []).length === 0) {
           service.pending = []
-          service.failPlan("Failed to read the keyboard layout.")
+          service.failPlan("Failed to read the keyboard layout.",
+            answered ? "no Backspace on " + keysProc.layout.layout : "answers incomplete, " + String(text || "").split("\u001e\n").length + " records")
           return
         }
         var all = Object.assign({}, service.answers)
@@ -565,6 +587,7 @@ Item {
     planFileProc.made = { nonce: nonce, untypable: made.untypable, fingerprint: fingerprint,
       active: made.active.map(function(index) { return planned.snippets[index] }) }
     planFileProc.stdinEnabled = true
+    service.begin("writing the plan")
     planFileProc.running = true
   }
 
@@ -598,12 +621,13 @@ Item {
     onExited: function(exitCode) {
       if (planFileProc.plan !== service.plan) return
       if (exitCode !== 0) {
-        service.failPlan("Failed to start text expansion in Hyprland.")
+        service.failPlan("Failed to start text expansion in Hyprland.", "exit " + exitCode)
         return
       }
       planWatchdog.restart()
       evalProc.plan = service.plan
       evalProc.command = ["hyprctl", "eval", Model.loader(service.planPath)]
+      service.begin("hyprctl eval")
       evalProc.running = true
     }
   }
@@ -625,8 +649,10 @@ Item {
         if (service.listening) {
           service.planDone()
         } else {
+          // Not what Hyprland said: a Lua error can quote the plan, and the
+          // plan spells the triggers out.
           console.warn("instant-snippets: Hyprland did not load the engine")
-          if (service.retries < 3) { service.retries += 1; retryTimer.restart() }
+          service.retryOrTell(service.engineError)
         }
         service.finishPlan()
       }
