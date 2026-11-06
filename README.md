@@ -78,8 +78,10 @@ apps. Its Lua configuration can subscribe to key events
    `engine.lua` with them through `hyprctl eval`.
 3. The engine remembers the last few keys and, when they spell a trigger,
    reports "trigger number 3".
-4. The shell checks that the session is not locked, then erases the trigger
-   and types the replacement with `wtype`, which is part of Omarchy.
+4. The shell checks that the session is not locked, then the engine erases
+   the trigger and types the replacement, key by key, straight to the window
+   through Hyprland. A replacement with a character your layout has no key
+   for is typed with `wtype` instead, which is part of Omarchy.
 
 Nothing is added to your Hyprland configuration files. The engine is loaded at
 run time, and again after Hyprland reloads its configuration or you switch
@@ -97,7 +99,8 @@ What the plugin does with your keys, plainly:
   moves to another window, within about ten seconds of the last key, and
   when a shortcut is pressed. For the few seconds in which Backspace can
   undo an expansion it also keeps the keys that led to it, to put them back.
-  It writes nothing to disk and logs nothing.
+  While it types a replacement it holds that replacement's keys, until they
+  are typed or the focus moves. It writes nothing to disk and logs nothing.
 - **Where it does not listen at all**: in excluded apps, and while a launcher,
   menu or panel has the keyboard.
 - **The lock screen**: Hyprland cannot tell the engine that the session is
@@ -110,16 +113,20 @@ What the plugin does with your keys, plainly:
   moved", as an event any program of yours can see. It carries the trigger's
   number and nothing of the trigger itself, not even its length.
 - **Process arguments** never contain a trigger, a replacement, or their
-  lengths. The replacement and the backspaces that erase the trigger reach
-  `wtype` on its standard input. The keys that spell your triggers go to
-  Hyprland in a file only you can read, under `$XDG_RUNTIME_DIR`, which is
-  gone at logout. Excluded apps are in it as numbers. For `{cursor}` the
-  cursor is moved back by two fixed commands (ten steps, one step), and a
-  line break typed as Shift+Enter is a fixed command too, so the number of
-  such commands run, though not their arguments, follows the replacement.
+  lengths. The keys that spell your triggers, and the keys of a replacement
+  about to be typed, go to Hyprland in files only you can read, under
+  `$XDG_RUNTIME_DIR`, which is gone at logout; the engine removes a
+  replacement's file as soon as it has read it. Excluded apps are in the
+  plan as numbers. The shell starts the same two commands for a snippet of
+  any length. One of them has the engine type the keys 24 at a time, with a
+  fixed `hyprctl eval` each time; how many of those run, like how long the
+  typing takes, follows the replacement's length. A replacement typed with
+  `wtype` reaches it on its standard input; for it, `{cursor}` and line
+  breaks typed as Shift+Enter are fixed commands, counted the same way.
 - **What can show in a process list**: the keyboard layout, and which scripts
-  your triggers use beyond plain ASCII (accented Latin, Cyrillic, ...): the
-  whole block of characters is looked up, never the ones you chose.
+  your triggers and replacements use beyond plain ASCII (accented Latin,
+  Cyrillic, ...): the whole block of characters is looked up, never the ones
+  you chose.
 - **Notifications** use fixed wording and never contain a trigger or
   replacement.
 - With expansion disabled, or with no snippets, nothing is loaded into
@@ -203,13 +210,25 @@ There can be up to 500 snippets.
   or without Shift or AltGr. Characters that need a dead key or Compose cannot
   be part of a trigger. The panel marks triggers the current layout cannot type.
 - A replacement can contain any printable characters, line breaks and tabs,
-  whatever your layout: it is typed as text, not as keys.
-- Replacements are typed, not pasted: a few hundred characters take a second
-  or two, a thousand several. Each line break typed as Shift+Enter, and
-  moving the cursor for `{cursor}`, adds half a second: the pause is what
-  keeps the key from repeating in the window. Keys pressed meanwhile are
-  ignored by the engine, and if the focus moves to another window the rest
-  is not typed.
+  whatever your layout.
+- Replacements are typed, not pasted, so the clipboard is left alone. The
+  engine types them through Hyprland, with the keys of your keyboard's first
+  layout, whichever layout is in use: Hyprland sends its keys that way. A few
+  hundred characters take a fraction of a second.
+- A replacement with a character the first layout has no key for (an emoji,
+  or "á" when the first layout is US) is typed with `wtype`, as text, which
+  takes a second or two for a few hundred characters, and half a second more for each line break typed as
+  Shift+Enter and for moving the cursor to `{cursor}`. An input method such
+  as fcitx5 can hold a key's release back until the window repeats the key,
+  so while a replacement is typed the engine sends the window each key's
+  release itself, through Hyprland, a moment after the press; that goes for
+  the Backspaces that erase the trigger too. A key you hold down while a
+  replacement is typed does not repeat until you press it again.
+- Keys pressed while a replacement is typed are ignored by the engine, and if
+  the focus moves to another window the rest is not typed.
+- When a replacement has been typed, Ctrl is pressed and let go once by
+  `wtype`. Hyprland leaves the window believing the first layout is in use
+  and Caps Lock is off; that has it set right before your next key.
 - A trigger that ends on a shifted character expands when Shift is released.
 - An expansion that uses `{cursor}` cannot be undone with Backspace, nor can
   one with a tab in it, or with line breaks while Shift+Enter is turned off.

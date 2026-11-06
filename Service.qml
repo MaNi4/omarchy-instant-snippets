@@ -41,6 +41,9 @@ Item {
   // a runtime directory there is nowhere private to put it.
   readonly property string runtimeDir: String(Quickshell.env("XDG_RUNTIME_DIR") || "")
   readonly property string planPath: runtimeDir + "/instant-snippets/plan.lua"
+  // The keys of the snippet being typed, for the engine to take: they spell
+  // it out, so they go the same way as the plan.
+  readonly property string keysPath: runtimeDir + "/instant-snippets/keys"
 
   // ---------- Snippets and settings ----------
   property bool expanding: true
@@ -323,6 +326,7 @@ Item {
 
   // ---------- The engine in Hyprland ----------
   property var layout: null        // the layout the triggers are spelled for
+  property var typingLayout: null  // the layout snippets are typed in: see Model.typingLayout()
   property string switched: ""     // the real keyboard that last reported a layout change
   property var answers: ({})       // layout id -> { "char:!": ways, "name:Shift_L": ways }
   property var active: []          // for each trigger number the engine knows, its snippet as it was planned
@@ -438,7 +442,7 @@ Item {
 
   function halt() {
     Quickshell.execDetached(["hyprctl", "eval", Model.stop()])
-    if (service.runtimeDir !== "") Quickshell.execDetached(["rm", "-f", "--", service.planPath])
+    if (service.runtimeDir !== "") Quickshell.execDetached(["rm", "-f", "--", service.planPath, service.keysPath])
     service.listening = false
     service.installed = ""
     service.active = []
@@ -453,22 +457,39 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        if (devicesProc.plan === service.plan) service.askKeys(Model.activeLayout(String(text || ""), service.switched))
+        if (devicesProc.plan !== service.plan) return
+        var devices = String(text || "")
+        service.askKeys(Model.activeLayout(devices, service.switched), Model.typingLayout(devices, service.switched))
       }
     }
   }
 
-  function askKeys(layout) {
-    if (!layout) {
+  // The keys of the triggers on the layout in use, and the keys of the
+  // replacements on the layout they are typed in, which is often the same.
+  function askKeys(layout, typingLayout) {
+    if (!layout || !typingLayout) {
       service.engineError = "No keyboard was found."
       service.endPlan()
       return
     }
     service.layout = layout
-    var known = service.answers[layout.id] || {}
-    service.pending = Model.questions(service.planned.snippets).filter(function(q) {
-      return known[Model.slot(q.what, q.named)] === undefined
-    })
+    service.typingLayout = typingLayout
+    var snippets = service.planned.snippets
+    var pending = []
+    function ask(layout, list) {
+      var known = service.answers[layout.id] || {}
+      var seen = {}
+      pending.forEach(function(item) { if (item.layout.id === layout.id) seen[Model.slot(item.what, item.named)] = true })
+      list.forEach(function(q) {
+        var slot = Model.slot(q.what, q.named)
+        if (known[slot] !== undefined || seen[slot]) return
+        seen[slot] = true
+        pending.push({ layout: layout, what: q.what, named: q.named })
+      })
+    }
+    ask(layout, Model.questions(snippets))
+    ask(typingLayout, Model.typingQuestions(snippets))
+    service.pending = pending
     service.askSome()
   }
 
@@ -479,22 +500,28 @@ Item {
     if (service.pending.length === 0) { service.install(); return }
     planWatchdog.restart()
     keysProc.plan = service.plan
-    keysProc.asked = service.pending.slice(0, Model.ASK_AT_ONCE)
-    service.pending = service.pending.slice(Model.ASK_AT_ONCE)
-    keysProc.command = Model.asking(service.layout, keysProc.asked)
+    // One layout a run: the questions for it come first, then the other's.
+    var layout = service.pending[0].layout
+    var count = 0
+    while (count < service.pending.length && count < Model.ASK_AT_ONCE && service.pending[count].layout.id === layout.id) count++
+    keysProc.layout = layout
+    keysProc.asked = service.pending.slice(0, count)
+    service.pending = service.pending.slice(count)
+    keysProc.command = Model.asking(layout, keysProc.asked)
     keysProc.running = true
   }
 
   Process {
     id: keysProc
     property int plan: 0
+    property var layout: null
     property var asked: []
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         if (keysProc.plan !== service.plan) return
         var answered = Model.parseAnswers(String(text || ""), keysProc.asked)
-        var known = Object.assign({}, service.answers[service.layout.id] || {}, answered || {})
+        var known = Object.assign({}, service.answers[keysProc.layout.id] || {}, answered || {})
         // No layout is without a Backspace key: xkbcli is missing or failed.
         if (!answered || (known["name:BackSpace"] || []).length === 0) {
           service.pending = []
@@ -502,7 +529,7 @@ Item {
           return
         }
         var all = Object.assign({}, service.answers)
-        all[service.layout.id] = known
+        all[keysProc.layout.id] = known
         service.answers = all
         service.askSome()
       }
@@ -616,8 +643,8 @@ Item {
   // The snippet typed last, for Backspace to take back: { trigger, replacement }.
   property var last: null
 
-  function resume(undoable) {
-    Quickshell.execDetached(["hyprctl", "eval", Model.resume(undoable)])
+  function resume(undoable, quick) {
+    Quickshell.execDetached(["hyprctl", "eval", Model.resume(undoable, quick)])
   }
 
   function matched(data) {
@@ -690,7 +717,14 @@ Item {
     service.stepWaiting = false
     service.steps = []
     service.typed = null
+    service.dropKeys()
     service.resume(false)
+  }
+
+  // The engine removes the keys' file when it takes them; one written and
+  // not taken (the session locked, the focus moved) is removed here.
+  function dropKeys() {
+    if (service.runtimeDir !== "") Quickshell.execDetached(["rm", "-f", "--", service.keysPath])
   }
 
   function expand(match) {
@@ -715,7 +749,13 @@ Item {
     })
     var undoable = service.undoing && filled.back === 0 && Model.undoable(filled.text, service.shiftEnter)
     service.typed = undoable ? { trigger: snippet.trigger, replacement: filled.text } : null
-    service.steps = Model.expanding(length, filled.text, service.shiftEnter, filled.back)
+    // Typed by the engine when the layout has a key for every character;
+    // otherwise by wtype, as text, in one go as before, so that a short one
+    // ("'a" for "á") is as quick as it was.
+    var keys = Model.keyedExpanding(length, filled.text, service.shiftEnter, filled.back, service.typingAnswers())
+    service.keyed = keys !== null
+    service.steps = keys ? Model.keyedSteps(keys, service.keysPath)
+      : Model.expanding(length, filled.text, service.shiftEnter, filled.back)
     service.nextStep()
   }
 
@@ -726,26 +766,39 @@ Item {
     service.last = null
     if (!snippet) { service.abandon(); return }
     service.typed = null
-    service.steps = Model.undoing(snippet.replacement, snippet.trigger)
+    var keys = Model.keyedUndoing(snippet.replacement, snippet.trigger, service.typingAnswers())
+    service.keyed = keys !== null
+    service.steps = keys ? Model.keyedSteps(keys, service.keysPath) : Model.undoing(snippet.replacement, snippet.trigger)
     service.nextStep()
+  }
+
+  // The keys of the layout snippets are typed in. None without a private
+  // place for the file the engine takes them from: wtype types then.
+  function typingAnswers() {
+    if (service.runtimeDir === "" || !service.typingLayout) return {}
+    return service.answers[service.typingLayout.id] || {}
   }
 
   // What is still to run for the snippet being typed: see Model.steps().
   // `typed` is that snippet when Backspace may take it back, else null.
   property var steps: []
   property var typed: null
+  property bool keyed: false        // the engine is typing it, not wtype
   property string typingError: ""
 
   function nextStep() {
     if (service.steps.length === 0) {
       stepWatchdog.stop()
+      service.dropKeys()
       service.typingError = ""
       service.last = service.typed
       service.typed = null
-      service.resume(service.last !== null)
+      service.resume(service.last !== null, service.keyed)
       return
     }
     stepWatchdog.restart()
+    // A step that checks the lock itself, or types nothing, goes at once.
+    if (service.steps[0].checks || service.steps[0].detached) { service.runStep(); return }
     service.stepWaiting = true
     lockProc.running = true
   }
@@ -756,6 +809,12 @@ Item {
     if (service.steps.length === 0) { service.abandon(); return }
     var step = service.steps[0]
     service.steps = service.steps.slice(1)
+    if (step.detached) {
+      Quickshell.execDetached(step.command)
+      service.nextStep()
+      return
+    }
+    stepProc.checks = step.checks === true
     stepProc.command = step.command
     stepProc.input = step.input === undefined ? "" : step.input
     stepProc.stdinEnabled = step.input !== undefined
@@ -788,6 +847,7 @@ Item {
   Process {
     id: stepProc
     property string input: ""
+    property bool checks: false   // the step found the session locked when it exits 3
     onStarted: {
       if (!stdinEnabled) return
       write(input)
@@ -797,7 +857,10 @@ Item {
     onExited: function(exitCode) {
       // Stopped by typingFailed(), which has already dealt with it.
       if (!stepWatchdog.running) return
-      exitCode === 0 ? service.nextStep() : service.typingFailed()
+      if (exitCode === 0) service.nextStep()
+      // Locked halfway through: no more of it, and nothing to tell.
+      else if (exitCode === 3 && stepProc.checks) { service.last = null; service.abandon() }
+      else service.typingFailed()
     }
   }
 

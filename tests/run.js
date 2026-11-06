@@ -9,7 +9,8 @@ const root = path.join(__dirname, "..")
 const source = fs.readFileSync(path.join(root, "Model.js"), "utf8").replace(/^\.pragma library\s*$/m, "")
 const Keys = new Function(source + `\nreturn { activeLayout, characters, codePoint, asking, parseAnswers, parseAnswer, keyOf,
   keysOf, questions, slot, problem, parseConfig, formatConfig, preview, filter, plan, stop, resume, parseEvent,
-  typing, backspaces, loader, switchedKeyboard, writing, tightening, dataFile, noted, absent, moving, DATA_FILE, clean, clusters, undoable, reject, MAX_SNIPPETS, ASCII, LATIN, chunks, steps, expanding, undoing, render, backing, format, nextFormat, DATE_FORMATS, TIME_FORMATS, classKey, skipping, appName, bytes, pasted, pasting, PASTE_BYTES, contrast, legible, dimmed, mix, keypadKeys, lockedKeysOf, otherCase, capsLock, realKeyboard, fingerprint, NAMED, SHIFT, LEVEL3, SHORTCUT }`)()
+  typing, backspaces, loader, switchedKeyboard, writing, tightening, dataFile, noted, absent, moving, DATA_FILE, clean, clusters, undoable, reject, MAX_SNIPPETS, ASCII, LATIN, chunks, steps, expanding, undoing, render, backing, format, nextFormat, DATE_FORMATS, TIME_FORMATS, classKey, skipping, appName, bytes, pasted, pasting, PASTE_BYTES, contrast, legible, dimmed, mix, keypadKeys, lockedKeysOf, otherCase, capsLock, realKeyboard, fingerprint, NAMED, SHIFT, LEVEL3, SHORTCUT,
+  typingLayout, typingQuestions, keyFor, keyed, keyedExpanding, keyedUndoing, keyedSteps, keysText, loadingKeys, typingKeys, KEYS_AT_ONCE, SETTLING, quote }`)()
 
 // What `xkbcli how-to-type --disable-compose` prints.
 const answer = rows => ["keysym: something (0x0000)", "", "=== Direct access ===", "",
@@ -751,6 +752,337 @@ const tests = {
     assert.strictEqual(out, "instant-snippets:7:1:0\ntrue\ntrue\n")
   },
 }
+
+// The keys typed through Hyprland, on a made-up layout: "a" plain, "A" with
+// Shift (or Caps Lock), "@" with AltGr, "ä" only with Caps Lock.
+const typing = Object.fromEntries(Object.entries({
+  "char:a": answer([row(38, "")]),
+  "char:A": answer([row(38, "Shift", 2), row(38, "Lock", 2)]),
+  "char:@": answer([row(11, "Shift", 2), row(24, "LevelThree", 3)]),
+  "char:ä": answer([row(48, "Lock", 2)]),
+  "char:€": answer([row(26, "Mod5", 3)]),
+  "name:BackSpace": answer([row(22, ""), row(22, "Shift", 2)]),
+  "name:Return": answer([row(36, "")]),
+  "name:Tab": answer([row(23, "")]),
+  "name:Left": answer([row(113, "")]),
+}).map(([slot, text]) => [slot, Keys.parseAnswer(text)]))
+
+Object.assign(tests, {
+  "snippets are typed in the keyboard's first layout, whichever is in use"() {
+    const sk = devices({ active_layout_index: 1, active_keymap: "Slovak (QWERTY)" })
+    assert.strictEqual(Keys.activeLayout(sk).layout, "sk")
+    assert.strictEqual(Keys.typingLayout(sk).layout, "us")
+    assert.strictEqual(Keys.typingLayout(sk).variant, "")
+    assert.strictEqual(Keys.typingLayout(sk).id, Keys.activeLayout(devices()).id)
+    assert.strictEqual(Keys.typingLayout("nonsense"), null)
+  },
+  "what is asked for the replacements says at most which scripts they use"() {
+    const plain = Keys.typingQuestions([{ trigger: "!em", replacement: "me@example.com" }])
+    const asked = plain.filter(q => !q.named).map(q => q.what)
+    assert.strictEqual(asked.length, Keys.ASCII.length)
+    assert.ok(plain.some(q => q.named && q.what === "Return") && plain.some(q => q.named && q.what === "Left"))
+    const accented = Keys.typingQuestions([{ trigger: "x", replacement: "Dobrý deň" }]).filter(q => !q.named)
+    assert.strictEqual(accented.length, Keys.ASCII.length + Keys.LATIN.length)
+    const greek = Keys.typingQuestions([{ trigger: "x", replacement: "λ" }]).filter(q => !q.named)
+    assert.strictEqual(greek.length, Keys.ASCII.length + 256)
+  },
+  "a character's key is the one with the fewest modifiers Hyprland can hold"() {
+    assert.deepStrictEqual(Keys.keyFor(typing, "a", false), [38, 0])
+    assert.deepStrictEqual(Keys.keyFor(typing, "A", false), [38, Keys.SHIFT])
+    assert.deepStrictEqual(Keys.keyFor(typing, "@", false), [11, Keys.SHIFT])
+    assert.deepStrictEqual(Keys.keyFor(typing, "€", false), [26, Keys.LEVEL3])
+    assert.strictEqual(Keys.keyFor(typing, "ä", false), null)
+    assert.strictEqual(Keys.keyFor(typing, "z", false), null)
+    assert.deepStrictEqual(Keys.keyFor(typing, "BackSpace", true), [22, 0])
+  },
+  "a text as keys, or null when the layout cannot type all of it"() {
+    assert.deepStrictEqual(Keys.keyed("\ba@A", typing, false), [[22, 0], [38, 0], [11, 1], [38, 1]])
+    assert.deepStrictEqual(Keys.keyed("a\na\t", typing, true), [[38, 0], [36, 1], [38, 0], [23, 0]])
+    assert.deepStrictEqual(Keys.keyed("a\n", typing, false), [[38, 0], [36, 0]])
+    assert.strictEqual(Keys.keyed("aä", typing, false), null)
+    assert.strictEqual(Keys.keyed("a", {}, false), null)
+    assert.deepStrictEqual(Keys.keyedExpanding(2, "aa", false, 1, typing), [[22, 0], [22, 0], [38, 0], [38, 0], [113, 0]])
+    assert.strictEqual(Keys.keyedExpanding(1, "a", false, 1, Object.assign({}, typing, { "name:Left": [] })), null)
+    // The Backspace that asked for it has rubbed out one character already.
+    assert.deepStrictEqual(Keys.keyedUndoing("aaa", "@", typing), [[22, 0], [22, 0], [11, 1]])
+  },
+  "the keys reach the engine in a private file, never in a process's arguments"() {
+    const keys = Keys.keyedExpanding(3, "a@A".repeat(20), false, 0, typing)
+    const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "instant-snippets-"))
+    const file = path.join(dir, "run", "keys")
+    const steps = Keys.keyedSteps(keys, file)
+    assert.strictEqual(steps.length, 2)
+    assert.strictEqual(steps[0].input, Keys.keysText(keys))
+    assert.ok(steps[0].input.startsWith("22 0\n22 0\n22 0\n38 0\n11 1\n38 1\n"))
+    assert.strictEqual(steps[0].checks, true)
+    assert.deepStrictEqual(steps[1], { command: Keys.SETTLING, detached: true })
+    for (const step of steps) assert.ok(!step.command.join(" ").match(/\d+ \d/), step.command.join(" "))
+    // What is started is the same for a snippet of any length: only stdin differs.
+    for (const other of [[[38, 0]], keys.concat(keys, keys)]) {
+      assert.deepStrictEqual(Keys.keyedSteps(other, file).map(step => step.command), steps.map(step => step.command))
+    }
+    // Run with a stand-in hyprctl that says whether the session is locked and
+    // notes what it is told; LOCK_AFTER locks the session after that many evals.
+    const bin = path.join(dir, "bin")
+    fs.mkdirSync(bin)
+    fs.writeFileSync(path.join(bin, "hyprctl"), [
+      "#!/bin/sh",
+      'if [ "$1" = locked ]; then cat "$LOCKED"; exit 0; fi',
+      'printf "%s\\n" "$2" >> "$TOLD"',
+      'if [ -n "$LOCK_AFTER" ] && [ "$(wc -l < "$TOLD")" -ge "$LOCK_AFTER" ]; then echo true > "$LOCKED"; fi',
+    ].join("\n") + "\n", { mode: 0o755 })
+    const told = () => fs.readFileSync(path.join(dir, "told"), "utf8").split("\n").filter(Boolean)
+    const run = (step, input, locked, lockAfter) => {
+      fs.writeFileSync(path.join(dir, "locked"), locked)
+      fs.writeFileSync(path.join(dir, "told"), "")
+      try {
+        execFileSync(step.command[0], step.command.slice(1), { input, env: Object.assign({}, process.env,
+          { PATH: bin + ":" + process.env.PATH, LOCKED: path.join(dir, "locked"), TOLD: path.join(dir, "told"),
+            LOCK_AFTER: lockAfter ? String(lockAfter) : "" }) })
+        return 0
+      } catch (error) { return error.status }
+    }
+    assert.strictEqual(run(steps[0], steps[0].input, "false\n"), 0)
+    assert.strictEqual(fs.readFileSync(file, "utf8"), Keys.keysText(keys))
+    assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600)
+    assert.strictEqual(fs.statSync(path.dirname(file)).mode & 0o777, 0o700)
+    const lots = Math.ceil(keys.length / Keys.KEYS_AT_ONCE)
+    assert.deepStrictEqual(told(), [Keys.loadingKeys(file) + " " + Keys.typingKeys()]
+      .concat(Array(lots - 1).fill(Keys.typingKeys())))
+    // Exactly as many lots as the keys need, at the edges too.
+    for (const count of [1, 23, 24, 25, 48, 49, 2100]) {
+      const some = Array(count).fill([38, 0])
+      assert.strictEqual(run(steps[0], Keys.keysText(some), "false\n"), 0)
+      assert.strictEqual(told().length, Math.ceil(count / Keys.KEYS_AT_ONCE), "lots for " + count)
+    }
+    // Locked before it starts, or when that cannot be told: nothing typed.
+    assert.strictEqual(run(steps[0], steps[0].input, "true\n"), 3)
+    assert.strictEqual(told().length, 0)
+    assert.strictEqual(run(steps[0], steps[0].input, ""), 3)
+    assert.strictEqual(told().length, 0)
+    // Locked halfway: nothing more after it.
+    assert.strictEqual(run(steps[0], Keys.keysText(Array(240).fill([38, 0])), "false\n", 3), 3)
+    assert.strictEqual(told().length, 3)
+    fs.rmSync(dir, { recursive: true })
+  },
+  "the engine types the keys it is handed, through Hyprland"() {
+    const plan = Keys.plan([email], answers, { engine: path.join(root, "engine.lua"), nonce: 7 })
+    const file = path.join(require("os").tmpdir(), "instant-snippets-keys-" + process.pid)
+    fs.writeFileSync(file, Keys.keysText([[22, 0], [38, 1], [24, 2], [11, 3]]) + "junk\n", { mode: 0o600 })
+    const harness = `
+      local handlers, time = {}, 0
+      hl = {
+        dsp = {
+          event = function(text) return text end,
+          send_key_state = function(spec) return spec.state .. ":" .. spec.key .. ":" .. spec.mods end,
+        },
+        dispatch = function(what) print(what) end,
+        timer = function(callback) return { set_enabled = function() end } end,
+        get_config = function() return 250 end,
+        on = function(name, callback) handlers[name] = callback; return { remove = function() handlers[name] = nil end } end,
+      }
+      local function key(keycode, state) time = time + 30; handlers["input.keyboard.key"](keycode, time, state) end
+      ${plan.lua}
+      -- Not while nothing is being typed.
+      ${Keys.loadingKeys(file + ".none")}
+      key(50, 1) key(10, 1) key(10, 0) key(50, 0)
+      key(26, 1) key(26, 0) key(58, 1) key(58, 0)
+      ${Keys.loadingKeys(file)}
+      print(io.open(${JSON.stringify(file)}) == nil)
+      __instant_snippets.type_keys(3)
+      __instant_snippets.type_keys(3)
+      __instant_snippets.type_keys(3)
+    `
+    const out = execFileSync("lua", ["-e", harness], { encoding: "utf8" })
+    try { fs.unlinkSync(file) } catch (e) {}
+    assert.strictEqual(out, ["instant-snippets:7:1:0", "true",
+      "down:code:22:", "up:code:22:", "down:code:38:SHIFT", "up:code:38:SHIFT", "down:code:24:MOD5", "up:code:24:MOD5",
+      "down:code:11:SHIFT MOD5", "up:code:11:SHIFT MOD5", ""].join("\n"))
+  },
+})
+
+// ---------- Larger samples ----------
+// A whole made-up layout: letters, digits and their shifted symbols, a few
+// punctuation keys, € on AltGr, and every named key. "ä" has no key.
+const BIG = (() => {
+  const keys = {}
+  const add = (what, keycode, modifiers, level) => { (keys[what] = keys[what] || []).push(row(keycode, modifiers, level)) }
+  "abcdefghijklmnopqrstuvwxyz".split("").forEach((c, i) => {
+    add("char:" + c, 120 + i, "")
+    add("char:" + c.toUpperCase(), 120 + i, "Shift", 2)
+    add("char:" + c.toUpperCase(), 120 + i, "Lock", 2)
+  })
+  "0123456789".split("").forEach((c, i) => add("char:" + c, 160 + i, ""))
+  "!@#$%^&*()".split("").forEach((c, i) => add("char:" + c, 160 + i, "Shift", 2))
+  ;[".", ",", "-", "/", ":", "'"].forEach((c, i) => add("char:" + c, 180 + i, ""))
+  add("char: ", 65, "")
+  add("char:€", 190, "LevelThree", 3)
+  const named = { Shift_L: 50, Shift_R: 62, ISO_Level3_Shift: 92, Control_L: 37, BackSpace: 22, Multi_key: 66,
+    space: 65, Return: 36, Tab: 23, Left: 113, Right: 114, Delete: 119 }
+  Object.keys(named).forEach(name => add("name:" + name, named[name], ""))
+  return Object.fromEntries(Object.entries(keys).map(([slot, rows]) => [slot, Keys.parseAnswer(answer(rows))]))
+})()
+
+// Back from keys to the text they type on BIG: "\b" for Backspace, "←" for Left.
+const BIG_TEXT = (() => {
+  const map = {}
+  for (const [slot, ways] of Object.entries(BIG)) {
+    if (!slot.startsWith("char:")) continue
+    for (const way of ways) {
+      if (way.modifiers.includes("Lock")) continue
+      const bits = (way.modifiers.includes("Shift") ? Keys.SHIFT : 0) | (way.modifiers.includes("LevelThree") ? Keys.LEVEL3 : 0)
+      map[way.keycode + " " + bits] = slot.slice(5)
+    }
+  }
+  Object.assign(map, { "22 0": "\b", "36 0": "\n", [`36 ${Keys.SHIFT}`]: "\n", "23 0": "\t", "113 0": "←" })
+  return map
+})()
+
+// A random generator that gives the same samples every run.
+const seeded = seed => () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648
+const pick = (random, list) => list[Math.floor(random() * list.length)]
+
+// Runs Lua and gives back what it printed.
+const lua = code => execFileSync("lua", ["-"], { input: code, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
+
+// A stand-in for Hyprland's `hl` that prints what the engine dispatches and
+// runs its one-shot timers when told to.
+const HARNESS = `
+  local handlers, time, timers = {}, 0, {}
+  hl = {
+    dsp = {
+      event = function(text) return text end,
+      send_key_state = function(spec) return spec.state .. ":" .. spec.key .. ":" .. spec.mods end,
+    },
+    dispatch = function(what) print(what) end,
+    timer = function(callback, options)
+      if not (options and options.type == "repeat") then timers[#timers + 1] = callback end
+      return { set_enabled = function() end }
+    end,
+    get_config = function() return 250 end,
+    get_layers = function() return {} end,
+    on = function(name, callback) handlers[name] = callback; return { remove = function() handlers[name] = nil end } end,
+  }
+  local function key(keycode, state) time = time + 30; handlers["input.keyboard.key"](keycode, time, state) end
+  local function tap(keycode) key(keycode, 1) key(keycode, 0) end
+  local function shifted(keycode) key(50, 1) tap(keycode) key(50, 0) end
+  local function settle() local t = timers; timers = {}; for _, f in ipairs(t) do f() end end
+`
+
+Object.assign(tests, {
+  "500 snippets of the longest size: every trigger expands to its own number"() {
+    const random = seeded(1)
+    const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+    const snippets = []
+    const seen = new Set()
+    while (snippets.length < Keys.MAX_SNIPPETS) {
+      // "!" and up to 31 more: no trigger ends another, so each has one match.
+      const length = 4 + Math.floor(random() * 28)
+      let trigger = "!"
+      for (let i = 1; i < length; i++) trigger += pick(random, letters)
+      if ([...seen].some(t => t.endsWith(trigger) || trigger.endsWith(t))) continue
+      seen.add(trigger)
+      let replacement = ""
+      for (let i = 0; i < 1000; i++) replacement += pick(random, "abc DEF 123 .,-\n\t€")
+      snippets.push({ trigger, replacement })
+    }
+    for (const s of snippets) assert.strictEqual(Keys.problem([], s.trigger, s.replacement, -1), "", s.trigger)
+    const started = Date.now()
+    const plan = Keys.plan(snippets, BIG, { engine: path.join(root, "engine.lua"), nonce: 7 })
+    assert.ok(Date.now() - started < 2000, "plan took " + (Date.now() - started) + " ms")
+    assert.strictEqual(plan.active.length, 500)
+    assert.strictEqual(plan.untypable.length, 0)
+    for (const s of snippets) assert.ok(!plan.lua.includes(s.trigger.slice(1)) || s.trigger.length < 6, s.trigger)
+    const keycode = c => BIG["char:" + c][0].keycode
+    let script = HARNESS + plan.lua + "\n"
+    snippets.forEach((s, i) => {
+      script += "tap(65) shifted(" + keycode("!") + ") "
+      script += [...s.trigger.slice(1)].map(c => "tap(" + keycode(c) + ")").join(" ")
+      script += ` __instant_snippets.resume(false) settle() print("--${i + 1}")\n`
+    })
+    const out = lua(script).split("\n").filter(Boolean)
+    const events = out.filter(line => line.startsWith("instant-snippets:") || line.startsWith("--"))
+    snippets.forEach((s, i) => {
+      assert.strictEqual(events[2 * i], "instant-snippets:7:" + (i + 1) + ":0", "snippet " + (i + 1) + " " + s.trigger)
+      assert.strictEqual(events[2 * i + 1], "--" + (i + 1))
+    })
+  },
+
+  "replacements of every length are typed key for key, through the engine"() {
+    const random = seeded(2)
+    const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()., -/:'\n\t€"
+    const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "instant-snippets-"))
+    const file = path.join(dir, "keys")
+    const plan = Keys.plan([{ trigger: "!em", replacement: "x" }], BIG, { engine: path.join(root, "engine.lua"), nonce: 7 })
+    const samples = [0, 1, 23, 24, 25, 100, 333, 999, 1000].map(length => {
+      let text = ""
+      for (let i = 0; i < length; i++) text += pick(random, alphabet)
+      return text
+    })
+    for (const shiftEnter of [false, true]) {
+      for (const [n, text] of samples.entries()) {
+        const back = n % 3 === 0 ? 0 : Math.floor(random() * text.length)
+        const keys = Keys.keyedExpanding(3, text, shiftEnter, back, BIG)
+        assert.ok(keys, "typable: " + JSON.stringify(text.slice(0, 20)))
+        fs.writeFileSync(file, Keys.keysText(keys), { mode: 0o600 })
+        // The engine is busy typing only after a match; the shell then has it
+        // take the file and asks for lots of 24 until none are left.
+        let script = HARNESS + plan.lua + `\nshifted(${BIG["char:!"][0].keycode}) tap(${BIG["char:e"][0].keycode}) tap(${BIG["char:m"][0].keycode})\n`
+        script += Keys.loadingKeys(file) + "\n"
+        for (let i = 0; i < keys.length; i += Keys.KEYS_AT_ONCE) script += Keys.typingKeys() + "\n"
+        script += Keys.typingKeys() + "\n" // one too many types nothing
+        const downs = lua(script).split("\n").filter(line => line.startsWith("down:"))
+        assert.ok(!fs.existsSync(file), "the engine removes the file")
+        const typed = downs.map(line => {
+          const [, , code, mods] = line.split(":")
+          const bits = (mods.includes("SHIFT") ? Keys.SHIFT : 0) | (mods.includes("MOD5") ? Keys.LEVEL3 : 0)
+          return BIG_TEXT[code + " " + bits]
+        }).join("")
+        assert.strictEqual(typed, "\b\b\b" + text + "←".repeat(back), "length " + text.length)
+        // Line breaks are Shift+Enter only when asked.
+        const enters = downs.filter(line => line.startsWith("down:code:36:"))
+        assert.ok(enters.every(line => line.endsWith(shiftEnter ? "SHIFT" : ":")), "enters " + text.length)
+      }
+    }
+    // A character the layout has no key for: wtype types the whole snippet.
+    assert.strictEqual(Keys.keyedExpanding(3, "a".repeat(500) + "ä", false, 0, BIG), null)
+    fs.rmSync(dir, { recursive: true })
+  },
+
+  "undoing a long snippet takes it back and types the trigger again"() {
+    const text = "Dobrý deň".replace(/[ýň]/g, "y") + " ".repeat(10) + "x\n".repeat(400)
+    const keys = Keys.keyedUndoing(text, "!em", BIG)
+    const typed = keys.map(key => BIG_TEXT[key[0] + " " + key[1]]).join("")
+    assert.strictEqual(typed, "\b".repeat(Keys.clusters(text) - 1) + "!em")
+  },
+
+  "the questions for 500 long replacements stay few"() {
+    const random = seeded(3)
+    const snippets = []
+    for (let i = 0; i < 500; i++) {
+      let replacement = ""
+      for (let j = 0; j < 1000; j++) replacement += pick(random, "abcxyzABC123.,áéíóúčšž€Жд")
+      snippets.push({ trigger: "!t" + i, replacement })
+    }
+    const started = Date.now()
+    const asked = Keys.typingQuestions(snippets)
+    assert.ok(Date.now() - started < 2000, "took " + (Date.now() - started) + " ms")
+    const texts = asked.filter(q => !q.named).map(q => q.what)
+    // ASCII, the accented Latin letters, and the whole blocks of € and Cyrillic: never one by one.
+    assert.strictEqual(new Set(texts).size, texts.length)
+    assert.ok(texts.includes("é") && texts.includes("ÿ"), "Latin as a block")
+    assert.ok(texts.includes("Ж") && texts.includes("ѿ"), "Cyrillic as a block")
+    assert.ok(texts.includes("€") && texts.includes("₿"), "€ as a block")
+    assert.ok(texts.length < 1000, texts.length + " questions")
+  },
+
+  "a path with odd characters reaches Lua whole"() {
+    const odd = '/run/user/1000/a "b" \\c\nd\re\tf\u0001' + "5/keys"
+    const out = lua("io.write(" + Keys.quote(odd) + ")")
+    assert.strictEqual(out, odd)
+    assert.ok(!Keys.quote(odd).includes("\n"))
+  },
+})
 
 let failed = 0
 for (const [name, test] of Object.entries(tests)) {

@@ -86,14 +86,15 @@ function typingKeyboard(keyboards, switched) {
 
 // The layout the user types on, out of `hyprctl devices -j`.
 //   { layout: "sk", variant: "qwerty", options: "...", name: "Slovak (QWERTY)", id: "..." }
-// null when there is no keyboard to go by.
-function activeLayout(devicesJson, switched) {
+// null when there is no keyboard to go by. With `first`, the keyboard's first
+// layout instead of the one in use: see typingLayout().
+function activeLayout(devicesJson, switched, first) {
   var keyboards = []
   try { keyboards = JSON.parse(devicesJson).keyboards || [] } catch (e) { return null }
   var keyboard = typingKeyboard(keyboards, switched)
   if (!keyboard) return null
 
-  var index = Number(keyboard.active_layout_index) || 0
+  var index = first ? 0 : Number(keyboard.active_layout_index) || 0
   var layouts = String(keyboard.layout || "us").split(",")
   var variants = String(keyboard.variant || "").split(",")
   var active = {
@@ -102,10 +103,17 @@ function activeLayout(devicesJson, switched) {
     layout: (layouts[index] || layouts[0] || "us").trim(),
     variant: (variants[index] || "").trim(),
     options: String(keyboard.options || ""),
-    name: String(keyboard.active_keymap || "")
+    name: first ? "" : String(keyboard.active_keymap || "")
   }
   active.id = [active.rules, active.model, active.layout, active.variant, active.options].join("|")
   return active
+}
+
+// The layout a snippet is typed in. Hyprland hands the keys the engine types
+// to the window with the first layout selected, whichever is in use, so the
+// keys of that one are the ones that type the snippet's characters.
+function typingLayout(devicesJson, switched) {
+  return activeLayout(devicesJson, switched, true)
 }
 
 // "!em" -> ["!", "e", "m"], by character rather than UTF-16 unit.
@@ -288,32 +296,45 @@ function isLatin(character) {
 function questions(snippets) {
   var names = NAMED.slice()
   for (var character in KEYPAD) if (names.indexOf(KEYPAD[character]) < 0) names.push(KEYPAD[character])
-  var list = names.map(function(name) { return { what: name, named: true } })
+  var letters = []
+  for (var i = 0; i < snippets.length; i++) {
+    characters(snippets[i].trigger).forEach(function(letter) { letters.push(letter, otherCase(letter)) })
+  }
+  return asked(names, letters)
+}
 
+// The questions for typing the replacements, on the layout they are typed in
+// (see typingLayout()): the keys a snippet presses besides its characters,
+// and its characters the same way as questions() asks a trigger's, by whole
+// blocks, so that what is asked says at most which scripts they are in.
+function typingQuestions(snippets) {
+  var letters = []
+  for (var i = 0; i < snippets.length; i++) letters = letters.concat(characters(snippets[i].replacement))
+  return asked(NAMED.slice(), letters)
+}
+
+// The named keys, ASCII, the accented Latin letters when `letters` has one,
+// and the 256 code points around any other of them, so that it is its script
+// that shows, not the character.
+function asked(names, letters) {
+  var list = names.map(function(name) { return { what: name, named: true } })
   var latin = false
   var others = {}
-  for (var i = 0; i < snippets.length; i++) {
-    var letters = characters(snippets[i].trigger)
-    for (var j = 0; j < letters.length; j++) {
-      var both = [letters[j], otherCase(letters[j])]
-      for (var k = 0; k < both.length; k++) {
-        if (both[k] === "" || both[k].codePointAt(0) <= 0x7e) continue
-        if (isLatin(both[k])) latin = true
-        else others[both[k].codePointAt(0) >> 8] = true
-      }
-    }
+  for (var j = 0; j < letters.length; j++) {
+    var letter = letters[j]
+    if (letter === "" || letter.codePointAt(0) <= 0x7e) continue
+    if (isLatin(letter)) latin = true
+    else others[letter.codePointAt(0) >> 8] = true
   }
-  // A character of another script brings in the 256 code points around it,
-  // so that it is its script that shows, not the character.
-  var asked = ASCII.concat(latin ? LATIN : [])
+  var points = ASCII.concat(latin ? LATIN : [])
   Object.keys(others).map(Number).sort(function(a, b) { return a - b }).forEach(function(block) {
     for (var point = block * 256; point < block * 256 + 256; point++) {
       if (point >= 0xd800 && point <= 0xdfff) continue
       if (point <= 0x17f) continue
-      asked.push(String.fromCodePoint(point))
+      points.push(String.fromCodePoint(point))
     }
   })
-  for (var n = 0; n < asked.length; n++) list.push({ what: asked[n], named: false })
+  for (var n = 0; n < points.length; n++) list.push({ what: points[n], named: false })
   return list
 }
 
@@ -558,7 +579,10 @@ function filter(snippets, query) {
 }
 
 function quote(text) {
-  return '"' + String(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'
+  // Every control character as a numeric escape: a line break, say, cannot
+  // end the string or the line it is on.
+  return '"' + String(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+    .replace(/[\u0000-\u001f\u007f]/g, function(c) { return "\\" + ("00" + c.charCodeAt(0)).slice(-3) }) + '"'
 }
 
 function table(entries) {
@@ -802,8 +826,11 @@ function stop(nonce) {
 
 // `undoable` after a snippet was typed: Backspace as the very next key takes
 // it back.
-function resume(undoable) {
-  return "if __instant_snippets then __instant_snippets.resume(" + (undoable ? "true" : "false") + ") end"
+// `quick` when the engine typed it: no input method hands keys back after
+// that, so the engine need not wait for them before it listens again.
+function resume(undoable, quick) {
+  return "if __instant_snippets then __instant_snippets.resume(" + (undoable ? "true" : "false")
+    + (quick ? ", true" : "") + ") end"
 }
 
 // The engine's event, out of Hyprland's "custom" event data: the trigger the
@@ -971,6 +998,131 @@ function expanding(length, text, shiftEnter, back) {
 // that asked for this has already rubbed out one character.
 function undoing(text, trigger) {
   return steps(backspaces(clusters(text) - 1) + trigger, false)
+}
+
+// ---------- Typing through Hyprland ----------
+// A snippet is typed by the engine, inside Hyprland, which hands each key
+// straight to the window. wtype's keys go through an input method (fcitx5)
+// when one runs, and it at times holds a key back long enough for the window
+// to repeat it: "dddddobrovodsky". Hyprland's own keys do not go that way.
+//
+// A key is [keycode, bits], bits being SHIFT and LEVEL3 (AltGr). Hyprland
+// sends them with the first layout selected and Caps Lock off, so they are
+// looked up in the answers for typingLayout(), and come out the same however
+// Caps Lock is.
+
+// The key that types a character, or that has a name, with as few modifiers
+// as it can: null when the layout has none, or none without Caps Lock or the
+// like, which Hyprland cannot hold down.
+function keyFor(answers, what, named) {
+  var ways = answers[slot(what, named)] || []
+  var best = null
+  for (var i = 0; i < ways.length; i++) {
+    var bits = 0
+    var usable = true
+    for (var j = 0; j < ways[i].modifiers.length; j++) {
+      var modifier = ways[i].modifiers[j]
+      if (modifier === "Shift") bits |= SHIFT
+      else if (modifier === "LevelThree" || modifier === "Mod5") bits |= LEVEL3
+      else usable = false
+    }
+    if (usable && (!best || bits < best[1])) best = [ways[i].keycode, bits]
+  }
+  return best
+}
+
+// The keys that type a text: Backspace for "\b", Shift+Enter or Enter for a
+// line break, Tab for a tab. null when a character has no key on the layout:
+// such a snippet is typed by wtype, as text.
+function keyed(text, answers, shiftEnter) {
+  var keys = []
+  var letters = characters(text)
+  for (var i = 0; i < letters.length; i++) {
+    var letter = letters[i]
+    var key
+    if (letter === "\b") key = keyFor(answers, "BackSpace", true)
+    else if (letter === "\t") key = keyFor(answers, "Tab", true)
+    else if (letter === "\n") {
+      key = keyFor(answers, "Return", true)
+      if (key && shiftEnter) key = [key[0], key[1] | SHIFT]
+    } else key = keyFor(answers, letter, false)
+    if (!key) return null
+    keys.push(key)
+  }
+  return keys
+}
+
+// A trigger of `length` keys rubbed out, the text typed, and the cursor moved
+// `back` characters into it: the keys, or null as keyed() has it.
+function keyedExpanding(length, text, shiftEnter, back, answers) {
+  var keys = keyed(backspaces(length) + text, answers, shiftEnter)
+  var left = keyFor(answers, "Left", true)
+  if (!keys || (back > 0 && !left)) return null
+  for (var i = 0; i < back; i++) keys.push(left)
+  return keys
+}
+
+// A snippet's text taken back and its trigger typed again: see undoing().
+function keyedUndoing(text, trigger, answers) {
+  return keyed(backspaces(clusters(text) - 1) + trigger, answers, false)
+}
+
+// How many keys the engine types at a time. Between two lots the shell asks
+// again whether the session is locked: no more of a snippet goes in once it
+// is. Lots of this size keep that from slowing a long snippet down much.
+var KEYS_AT_ONCE = 24
+
+// What the engine is told, by `hyprctl eval`: to read the keys from a file
+// and remove it, and to type the next few of them. The keys spell the
+// snippet out, so they are never in a process's arguments.
+function loadingKeys(path) {
+  return "if __instant_snippets then __instant_snippets.load_keys(" + quote(path) + ") end"
+}
+
+function typingKeys() {
+  return "if __instant_snippets then __instant_snippets.type_keys(" + KEYS_AT_ONCE + ") end"
+}
+
+// The keys as the engine reads them: "keycode bits" a line.
+function keysText(keys) {
+  return keys.map(function(key) { return key[0] + " " + key[1] + "\n" }).join("")
+}
+
+// What wtype does when the engine is done: Ctrl down and up, as modifier
+// state only, no key. Hyprland leaves the window believing the first layout
+// is selected and Caps Lock and Num Lock are off; another program's keyboard,
+// and then the user's own again, has it told the truth before the user's
+// next key.
+var SETTLING = ["wtype", "-M", "ctrl", "-m", "ctrl"]
+
+// Exits 3 when the session is locked, or when that cannot be told.
+var UNLESS_LOCKED = '[ "$(hyprctl locked 2>/dev/null)" = false ] || exit 3\n'
+
+// What to run, in order, to have the engine type `keys`, in the form steps()
+// has. One process writes them to a file only its owner can read, checks
+// that the session is not locked, and has the engine take the file and type
+// the first few keys; then, as long as keys are left, it checks again and
+// has the engine type a few more. How many are left it counts from the file
+// itself, so the steps, and what they are started with, are the same for a
+// snippet of any length. It checks the lock itself (`checks`). SETTLING then
+// runs alongside (`detached`).
+function keyedSteps(keys, path) {
+  var write = writing(path, true)
+  var script = write[2] + " || exit 1\n"
+    + 'n=$(wc -l < "$1") || exit 1\n'
+    + UNLESS_LOCKED
+    + 'hyprctl eval "$2" > /dev/null || exit 1\n'
+    + "i=" + KEYS_AT_ONCE + "\n"
+    + 'while [ "$i" -lt "$n" ]; do\n'
+    + "  " + UNLESS_LOCKED
+    + '  hyprctl eval "$3" > /dev/null || exit 1\n'
+    + "  i=$((i + " + KEYS_AT_ONCE + "))\n"
+    + "done\n"
+  return [
+    { command: ["sh", "-c", script, "sh", path, loadingKeys(path) + " " + typingKeys(), typingKeys()],
+      input: keysText(keys), checks: true },
+    { command: SETTLING, detached: true }
+  ]
 }
 
 // A text cut into the pieces to hand wtype one at a time.

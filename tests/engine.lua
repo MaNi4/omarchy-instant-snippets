@@ -28,7 +28,10 @@ local TRIGGERS = {
 local function world(triggers, locked, skipped, word_start)
   local w = { handlers = {}, events = {}, timers = {}, removed = 0, time = 1000, clock = 100, layers = {} }
   local hl = {
-    dsp = { event = function(text) return text end },
+    dsp = {
+      event = function(text) return text end,
+      send_key_state = function(spec) return "key:" .. spec.state .. ":" .. spec.key .. ":" .. spec.mods end,
+    },
     dispatch = function(text) table.insert(w.events, text) end,
     -- The engine's own repeating timer is kept apart from the one-shot ones.
     timer = function(callback, options)
@@ -333,12 +336,41 @@ do -- a key pressed while the shell types got in among the snippet: no undo
   local w = world()
   w.tap(E); w.tap(M)
   w.engine.resume(true)
-  w.tap(X)
+  local settle = table.remove(w.timers)
+  w.down(X)
+  -- Let go through Hyprland a moment later, so that the window has nothing to repeat.
   table.remove(w.timers)()
+  check("released at once", w.last(), "key:up:code:" .. X .. ":")
+  w.up(X)
+  settle()
+  local function told() local n = 0 for _, e in ipairs(w.events) do if e:sub(1, 4) ~= "key:" then n = n + 1 end end return n end
   w.tap(BACKSPACE)
-  check("a key among the snippet withdraws the undo", #w.events, 1)
+  check("a key among the snippet withdraws the undo", told(), 1)
   w.tap(E); w.tap(M)
-  check("and is not remembered", #w.events, 2)
+  check("and is not remembered", told(), 2)
+end
+
+do -- wtype's keys, handed on by an input method, are part of the snippet
+  local w = world()
+  w.tap(E); w.tap(M)
+  local key = w.handlers["input.keyboard.key"]
+  -- wtype's press, with no time, then the input method's, with one.
+  key(X, 0, 1); key(X, 0, 0)
+  w.time = w.time + 40; key(X, w.time, 1)
+  w.time = w.time + 40; key(X, w.time, 0)
+  w.resume(true)
+  local function told() local n = 0 for _, e in ipairs(w.events) do if e:sub(1, 4) ~= "key:" then n = n + 1 end end return n end
+  w.tap(BACKSPACE)
+  check("the snippet can still be undone", w.last(), "instant-snippets:7:undo")
+  -- A second press of the same key, not wtype's, is the user's.
+  w = world()
+  w.tap(E); w.tap(M)
+  key = w.handlers["input.keyboard.key"]
+  key(X, 0, 1); key(X, 0, 0)
+  w.tap(X); w.tap(X)
+  w.resume(true)
+  w.tap(BACKSPACE)
+  check("a key of the user's among them still withdraws it", told(), 1)
 end
 
 do -- a match the shell hands back leaves what was typed as it was
@@ -563,6 +595,35 @@ do -- a bar, which takes no keys, changes nothing
   w.handlers["layer.opened"](w.layers[1])
   w.tap(E); w.tap(M)
   check("a bar is not in the way", #w.events, 1)
+end
+
+do -- the keys of a snippet, typed through Hyprland until the focus moves
+  local path = os.tmpname()
+  local function hand(w, text)
+    local file = io.open(path, "w"); file:write(text); file:close()
+    w.engine.load_keys(path)
+  end
+  local function keys(w)
+    local list = {}
+    for _, event in ipairs(w.events) do if event:sub(1, 4) == "key:" then list[#list + 1] = event end end
+    return list
+  end
+  local w = world()
+  hand(w, "38 0\n")
+  check("not taken while nothing is typed", io.open(path), nil)
+  w.engine.type_keys(5)
+  check("nor typed", #keys(w), 0)
+  w.tap(E); w.tap(M)
+  hand(w, "22 0\n22 0\n38 1\n24 2\n")
+  check("the file is gone once taken", io.open(path), nil)
+  w.engine.type_keys(3)
+  check("a few at a time", #keys(w), 6)
+  check("pressed", keys(w)[5], "key:down:code:38:SHIFT")
+  check("and let go", keys(w)[6], "key:up:code:38:SHIFT")
+  w.handlers["window.active"]({ class = "other" })
+  w.engine.type_keys(3)
+  check("nothing more once the focus has moved", #keys(w), 6)
+  os.remove(path)
 end
 
 do -- stopping lets go of Hyprland

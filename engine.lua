@@ -76,6 +76,9 @@ function M.start(hl, config, clock)
   local undo_until = 0  -- Backspace before this second takes the last snippet back
   local waiting = nil   -- a match held back until Shift is let go
   local round = 0       -- counts matches, so an old timeout cannot end a new one
+  local queue = {}      -- keys the shell has handed over to be typed: { keycode, bits }
+  local next_key = 1    -- the first of them not typed yet
+  local echoes = {}     -- keycode -> presses wtype made that the input method has yet to hand on
   local subscriptions = {}
 
   -- An index lists, for a key, the triggers ending in it, longest first, so
@@ -173,6 +176,7 @@ function M.start(hl, config, clock)
     busy = true
     disturbed = false
     told = false
+    echoes = {}
     waiting = nil
     undo_until = 0
     forget(false)
@@ -303,8 +307,13 @@ function M.start(hl, config, clock)
 
   subscriptions[1] = hl.on("input.keyboard.key", function(keycode, time, state)
     if state ~= 0 and state ~= 1 then return end
-    -- Keys that wtype types carry no time, and are nobody's typing.
-    if time == 0 then return end
+    -- Keys that wtype types carry no time, and are nobody's typing. With an
+    -- input method they come round once more, with a time, as it hands them
+    -- on to the window: those are told apart by being expected.
+    if time == 0 then
+      if busy and state == 1 then echoes[keycode] = (echoes[keycode] or 0) + 1 end
+      return
+    end
     if seen_before(keycode, state) then return end
     if busy or paused or layered then
       -- Not text to match, but Shift pressed or let go now is still Shift
@@ -314,6 +323,21 @@ function M.start(hl, config, clock)
         held[keycode] = state == 1 and bit or nil
         refresh_modifiers()
       elseif busy and state == 1 then
+        -- What wtype types reaches the window through an input method
+        -- (fcitx5), which at times holds a key's release back until the
+        -- window has repeated the key: "Dobrýýýýýý". The window is sent the
+        -- release a moment after the press, through Hyprland, so it has
+        -- nothing to repeat; the late one changes nothing. A key the user
+        -- holds meanwhile repeats only once let go and pressed again.
+        hl.timer(function()
+          hl.dispatch(hl.dsp.send_key_state({ mods = "", key = "code:" .. keycode, state = "up" }))
+        end, { timeout = 1, type = "oneshot" })
+        -- One of wtype's own, handed on: part of the snippet.
+        if (echoes[keycode] or 0) > 0 then
+          echoes[keycode] = echoes[keycode] - 1
+          pressed[keycode] = nil
+          return
+        end
         -- It reached the window among what the shell typed: what is there
         -- now is no longer just the snippet, and Backspace cannot undo it.
         disturbed = true
@@ -344,6 +368,8 @@ function M.start(hl, config, clock)
   -- told, once, so that it stops typing into wherever the focus went.
   local function moved()
     if not busy then return end
+    -- Nothing more of the snippet goes to wherever the focus went.
+    queue = {}
     if saved then saved.moved = true end
     if not told then
       told = true
@@ -423,12 +449,16 @@ function M.start(hl, config, clock)
   -- An input method is still handing back the last keys typed for a moment
   -- after wtype has gone; listening again at once would take those for the
   -- user's, and the first of them would turn down the offer to undo.
-  function engine.resume(undoable)
+  -- `quick` when the engine typed it itself: those keys reach no input
+  -- method, so none come back, and a moment is enough.
+  function engine.resume(undoable, quick)
     local mine = round
+    queue = {}
     saved = nil
     hl.timer(function()
       if not busy or round ~= mine then return end
       busy = false
+      echoes = {}
       if undoing and before and not disturbed then
         -- The trigger is back where it was: it can be corrected, or rubbed
         -- out and typed again, and will expand as it did the first time.
@@ -443,7 +473,45 @@ function M.start(hl, config, clock)
       undoing = false
       if not undoable then before = nil end
       undo_until = undoable and not disturbed and clock() + 3 or 0
-    end, { timeout = config.settle or 150, type = "oneshot" })
+    end, { timeout = quick and 20 or config.settle or 150, type = "oneshot" })
+  end
+
+  -- Typing. The shell writes the keys of a snippet to a file only its owner
+  -- can read, has the engine take them (the file is removed at once), then
+  -- asks for a few at a time, checking between two lots that the session is
+  -- not locked. Hyprland hands each key straight to the focused window: not
+  -- through an input method, which can hold a key back until the window
+  -- repeats it. A key is "keycode bits" (bits: SHIFT, LEVEL3), as xkbcli
+  -- numbers keys; Hyprland types them with the first layout selected.
+  local MODS = { [0] = "", [SHIFT] = "SHIFT", [LEVEL3] = "MOD5", [SHIFT | LEVEL3] = "SHIFT MOD5" }
+
+  function engine.load_keys(path)
+    queue = {}
+    next_key = 1
+    local file = io.open(path, "r")
+    if file then
+      -- Only while a snippet is being typed: at any other time it is not ours to type.
+      if busy and not told then
+        for line in file:lines() do
+          local code, bits = line:match("^(%d+) (%d)$")
+          if code then queue[#queue + 1] = { tonumber(code), tonumber(bits) & (SHIFT | LEVEL3) } end
+        end
+      end
+      file:close()
+    end
+    os.remove(path)
+  end
+
+  function engine.type_keys(count)
+    for _ = 1, count do
+      local key = busy and not told and queue[next_key]
+      if not key then break end
+      next_key = next_key + 1
+      local mods, code = MODS[key[2]], "code:" .. key[1]
+      hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = code, state = "down" }))
+      hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = code, state = "up" }))
+    end
+    if not queue[next_key] then queue = {} end
   end
 
   -- The shell did nothing with the match: the keys spelled a trigger only in
@@ -475,6 +543,7 @@ function M.start(hl, config, clock)
     for _, subscription in ipairs(subscriptions) do subscription:remove() end
     subscriptions = {}
     stopped = true
+    queue = {}
     if idle_timer and idle_timer.set_enabled then idle_timer:set_enabled(false) end
     busy = false
     waiting = nil
