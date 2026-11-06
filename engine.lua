@@ -376,17 +376,28 @@ function M.start(hl, config, clock)
     end
   end
 
+  -- A notification, an OSD or the like takes no keys and no focus: the keys
+  -- still go where they went, and a trigger half typed when one comes or
+  -- goes is still being typed.
+  local function aside(layer)
+    return layer ~= nil and layer.interactivity == 0
+  end
+
+  -- Which layers have the keyboard is looked at again either way: a panel
+  -- or the lock screen can give up the keyboard just before it closes, and
+  -- then closes looking like a notification.
   subscriptions[3] = hl.on("layer.opened", function(layer)
-    -- A toast or the like takes no keys and no focus.
-    if not layer or (layer.interactivity or 0) ~= 0 then moved() end
+    look_at_layers(nil)
+    if aside(layer) then return end
+    moved()
     waiting = nil
     undo_until = 0
     forget(true)
-    look_at_layers(nil)
   end)
   subscriptions[4] = hl.on("layer.closed", function(layer)
-    forget(true)
     look_at_layers(layer)
+    if aside(layer) then return end
+    forget(true)
   end)
   look_at_layers(nil)
 

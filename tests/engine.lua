@@ -526,6 +526,37 @@ do -- what was typed is forgotten after a while even if no key follows
   check("the timer is stopped with the engine", w.ticking, false)
 end
 
+do -- a notification or an OSD coming and going in the middle of a trigger
+  local w = world()
+  local toast = { address = "0x7", mapped = true, interactivity = 0 }
+  w.tap(E)
+  w.handlers["layer.opened"](toast)
+  w.handlers["layer.closed"](toast)
+  w.tap(M)
+  check("the trigger still expands", w.last(), "instant-snippets:7:2:0")
+  -- One that takes the keyboard still breaks it.
+  w = world()
+  w.tap(E)
+  w.handlers["layer.opened"]({ address = "0x8", mapped = true, interactivity = 1 })
+  w.handlers["layer.closed"]({ address = "0x8", mapped = true, interactivity = 1 })
+  w.tap(M)
+  check("a menu in between breaks it", #w.events, 0)
+end
+
+do -- the lock screen or a panel gives up the keyboard just before it closes
+  local w = world()
+  local lock = { address = "0x6", mapped = true, interactivity = 1 }
+  w.layers = { lock }
+  w.handlers["layer.opened"](lock)
+  w.tap(E); w.tap(M)
+  check("deaf while locked", #w.events, 0)
+  lock.interactivity = 0
+  w.handlers["layer.closed"](lock) -- still listed as it closes
+  w.layers = {}
+  w.tap(E); w.tap(M)
+  check("listening again after it closed", #w.events, 1)
+end
+
 do -- a bar, which takes no keys, changes nothing
   local w = world()
   w.layers = { { address = "0x0", mapped = true, interactivity = 0 } }
