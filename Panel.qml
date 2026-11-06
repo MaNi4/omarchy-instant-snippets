@@ -1333,7 +1333,7 @@ Panel {
             : root.pasteNote !== "" ? root.pasteNote
             : root.editing >= 0 && root.untypable(root.editing)
               ? "This trigger cannot be typed on the " + (root.layoutName || "current") + " layout, so it will not expand."
-              : "Ctrl+Enter saves. {date} and {time} are filled in; {cursor} sets where the cursor ends up."
+              : "Ctrl+Enter saves. {date} and {time} are filled in, with a custom format too, as {date:yyMMdd} or {time:HH:mm:ss}; {cursor} sets where the cursor ends up."
           color: root.problem !== "" || root.pasteNote !== "" ? root.accent
             : root.editing >= 0 && root.doomed === root.editing ? root.danger : root.dimForeground
           font.family: root.ff

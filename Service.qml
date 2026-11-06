@@ -766,12 +766,14 @@ Item {
     var snippet = service.active[match - 1]
     if (!snippet) { service.abandon(); return }
     var length = Model.characters(snippet.trigger).length
-    // {date} and {time} in the formats chosen in the settings; {cursor} is
-    // where the cursor is left, which Backspace could not undo from.
+    // {date} and {time} in the formats chosen in the settings, {date:yyMMdd}
+    // and the like in their own; {cursor} is where the cursor is left, which
+    // Backspace could not undo from.
     var now = new Date()
     var filled = Model.render(snippet.replacement, {
       date: Qt.formatDate(now, service.dateFormat),
-      time: Qt.formatTime(now, service.timeFormat)
+      time: Qt.formatTime(now, service.timeFormat),
+      formatted: function(format) { return Qt.formatDateTime(now, format) }
     })
     var undoable = service.undoing && filled.back === 0 && Model.undoable(filled.text, service.shiftEnter)
     service.typed = undoable ? { trigger: snippet.trigger, replacement: filled.text } : null

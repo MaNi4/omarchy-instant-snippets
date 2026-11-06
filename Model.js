@@ -935,8 +935,15 @@ function nextFormat(formats, current) {
 // and {cursor} taken out, with the number of characters after it, which is
 // how far left the cursor has to go to end up there.
 //   render("Dear {cursor},\n{date}", { date: "1.2.2026" }) -> { text: "Dear ,\n1.2.2026", back: 10 }
+// A placeholder can carry a format of its own, a Qt date and time format:
+// {date:yyMMdd}, {time:HH:mm:ss}. `values.formatted(format)` fills it in;
+// plain {date} and {time} keep the formats chosen in the settings.
+var MAX_FORMAT = 64
+var PLACEHOLDER = new RegExp("\\{(date|time)(?::([^{}\\n]{1," + MAX_FORMAT + "}))?\\}", "g")
+
 function render(replacement, values) {
-  var text = String(replacement || "").replace(/\{(date|time)\}/g, function(whole, name) {
+  var text = String(replacement || "").replace(PLACEHOLDER, function(whole, name, own) {
+    if (own !== undefined) return typeof values.formatted === "function" ? String(values.formatted(own)) : whole
     return typeof values[name] === "string" ? values[name] : whole
   })
   var at = text.indexOf("{cursor}")

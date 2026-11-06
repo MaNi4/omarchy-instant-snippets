@@ -46,7 +46,10 @@ want to keep them.
   typed in them are ignored. Pick them from the running apps in the settings.
 - **Placeholders**: `{date}` and `{time}` in a replacement are filled in when
   it is inserted, in the format chosen in the settings, and `{cursor}` marks
-  where the cursor is left.
+  where the cursor is left. A placeholder can also have a custom format, so
+  that each snippet writes the date its way: `{date:yyMMdd}`,
+  `{date:MM/dd/yyyy}`, `{time:HH:mm:ss}`. See
+  [Date and time formats](#date-and-time-formats).
 - **Word-start only**: on by default, a trigger expands only at the start of
   a word (after a space, Enter or Tab, or when you start typing), never in the
   middle of one. After you move the cursor or delete text, where it is no
@@ -59,6 +62,64 @@ want to keep them.
   expand. Can be turned off; the icon then keeps the bar's own color and is
   faded while snippets do not expand: when expansion is disabled, when there
   are no snippets, or when something went wrong.
+
+## Date and time formats
+
+`{date}` and `{time}` use the formats chosen in the settings. For a custom
+format, write it after a colon: `{date:yyMMdd}`. The letters below are
+replaced by a part of the date or time; the examples are for Friday,
+6 March 2026, at 9:05:07 in the morning.
+
+| Letters | Gives | Meaning | Espanso |
+|---|---|---|---|
+| `d` | `6` | day | `%-d` |
+| `dd` | `06` | day, two digits | `%d` |
+| `ddd` | `Fri` | day of the week, short | `%a` |
+| `dddd` | `Friday` | day of the week | `%A` |
+| `M` | `3` | month | `%-m` |
+| `MM` | `03` | month, two digits | `%m` |
+| `MMM` | `Mar` | month name, short | `%b` |
+| `MMMM` | `March` | month name | `%B` |
+| `yy` | `26` | year, two digits | `%y` |
+| `yyyy` | `2026` | year | `%Y` |
+| `H` | `9` | hour, 0 to 23 | `%-H` |
+| `HH` | `09` | hour, 0 to 23, two digits | `%H` |
+| `h` … `AP` | `9` … `AM` | hour, 1 to 12, with AM or PM (`ap` for `am`) | `%-I` … `%p` |
+| `mm` | `05` | minutes | `%M` |
+| `ss` | `07` | seconds | `%S` |
+
+Both kinds of letters work in either placeholder: `{date:yyMMdd HH:mm}`
+gives `260306 09:05`. Anything else, such as `.`, `/`, `-`, `:` or a space,
+is typed as it is.
+
+**Words go in single quotes.** Letters in a word would be replaced too:
+`{date:dňa d.M.yyyy}` gives `6ňam 6.3.2026`, because `d` is the day and `a`
+is "am". In quotes they are typed as they are: `{date:'dňa' d.M.yyyy}` gives
+`dňa 6.3.2026`, and `{date:d.M.yyyy 'at' H:mm}` gives `6.3.2026 at 9:05`.
+
+**A wrong format breaks nothing**, but it types something you did not mean:
+`{date:hello}` gives `9ello`, as `h` is the hour. Try a new snippet once
+before you rely on it.
+
+**Coming from Espanso**: Espanso's `%` formats, such as `%y%m%d`, do not work
+here; `{date:%y%m%d}` types `%y%5%6` (`m` is the minutes, `d` the day).
+Use the letters in the first column of the table above, next to Espanso's
+codes in the last one. Common ones:
+
+| Espanso `format:` | Here |
+|---|---|
+| `%y%m%d` | `{date:yyMMdd}` |
+| `%m/%d/%Y` | `{date:MM/dd/yyyy}` |
+| `%d.%m.%Y` | `{date:dd.MM.yyyy}` |
+| `%Y-%m-%d` | `{date:yyyy-MM-dd}` |
+| `%H:%M` | `{time:HH:mm}` |
+| `%H:%M:%S` | `{time:HH:mm:ss}` |
+| `%I:%M %p` | `{time:hh:mm AP}` |
+| `%A, %B %-d` | `{date:dddd, MMMM d}` |
+
+The full list of letters is in Qt's documentation, for
+[dates](https://doc.qt.io/qt-6/qdate.html#toString) and
+[times](https://doc.qt.io/qt-6/qtime.html#toString).
 
 ## Screenshots
 

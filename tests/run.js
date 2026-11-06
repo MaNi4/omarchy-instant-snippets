@@ -10,7 +10,7 @@ const source = fs.readFileSync(path.join(root, "Model.js"), "utf8").replace(/^\.
 const Keys = new Function(source + `\nreturn { activeLayout, characters, codePoint, asking, parseAnswers, parseAnswer, keyOf,
   keysOf, questions, slot, problem, parseConfig, formatConfig, preview, filter, plan, stop, resume, parseEvent,
   typing, backspaces, loader, switchedKeyboard, writing, tightening, dataFile, noted, absent, moving, DATA_FILE, clean, clusters, undoable, reject, MAX_SNIPPETS, ASCII, LATIN, chunks, steps, expanding, undoing, render, backing, format, nextFormat, DATE_FORMATS, TIME_FORMATS, classKey, skipping, appName, bytes, pasted, pasting, PASTE_BYTES, contrast, legible, dimmed, mix, keypadKeys, lockedKeysOf, otherCase, capsLock, realKeyboard, fingerprint, NAMED, SHIFT, LEVEL3, SHORTCUT,
-  typingLayout, typingQuestions, keyFor, keyed, keyedExpanding, keyedUndoing, keyedSteps, keysText, loadingKeys, typingKeys, KEYS_AT_ONCE, SETTLING, quote }`)()
+  typingLayout, typingQuestions, keyFor, keyed, keyedExpanding, keyedUndoing, keyedSteps, keysText, loadingKeys, typingKeys, KEYS_AT_ONCE, SETTLING, quote, MAX_FORMAT }`)()
 
 // What `xkbcli how-to-type --disable-compose` prints.
 const answer = rows => ["keysym: something (0x0000)", "", "=== Direct access ===", "",
@@ -648,6 +648,21 @@ const tests = {
     assert.deepStrictEqual(Keys.render("Dear {cursor},\n{date}", values), { text: "Dear ,\n1.2.2026", back: 10 })
     assert.deepStrictEqual(Keys.render("a{cursor}b{cursor}c", values), { text: "abc", back: 2 })
     assert.deepStrictEqual(Keys.render("{other} {date}", {}), { text: "{other} {date}", back: 0 })
+    // A format of its own, handed to `formatted`; plain ones keep the setting's.
+    const own = Object.assign({ formatted: format => "<" + format + ">" }, values)
+    assert.deepStrictEqual(Keys.render("{date:yyMMdd} {date:MM/dd/yyyy} {date}", own),
+      { text: "<yyMMdd> <MM/dd/yyyy> 1.2.2026", back: 0 })
+    assert.deepStrictEqual(Keys.render("{time:HH:mm:ss}|{time}|{date:yyyy-MM-dd HH:mm}", own),
+      { text: "<HH:mm:ss>|9:05|<yyyy-MM-dd HH:mm>", back: 0 })
+    assert.deepStrictEqual(Keys.render("{date:'week of' d MMM}{cursor}!", own), { text: "<'week of' d MMM>!", back: 1 })
+    // Not a format: empty, too long, across a line, or with a brace in it.
+    const long = "y".repeat(Keys.MAX_FORMAT + 1)
+    for (const odd of ["{date:}", "{date:" + long + "}", "{date:yy\nMM}", "{date:{x}}", "{datum:yy}", "{date :yy}"]) {
+      assert.strictEqual(Keys.render(odd, own).text, odd, JSON.stringify(odd))
+    }
+    assert.strictEqual(Keys.render("{date:" + "y".repeat(Keys.MAX_FORMAT) + "}", own).text, "<" + "y".repeat(Keys.MAX_FORMAT) + ">")
+    // Without `formatted`, one with a format is left as written.
+    assert.strictEqual(Keys.render("{date:yy} {date}", values).text, "{date:yy} 1.2.2026")
     assert.deepStrictEqual(Keys.backing(false), ["wtype", "-k", "Left"])
     assert.strictEqual(Keys.backing(true).filter(a => a === "Left").length, 10)
     // The cursor goes back in tens and ones, each a fixed command: no count in any of them.
